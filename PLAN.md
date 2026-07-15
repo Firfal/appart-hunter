@@ -365,13 +365,16 @@ create table search_targets (
   label             text not null,                 -- 'École 42', 'UPEC Juliette'
   geo               geography(Point, 4326) not null,
   weight            numeric(4,2) not null default 1.0,   -- poids dans le score trajet
-  max_commute_min   smallint not null default 45,        -- seuil pour CETTE cible
-  hard              boolean not null default false,      -- true = filtre dur (doit être <= seuil)
+  max_commute_min   smallint not null default 50,        -- seuil pour CETTE cible
+  hard              boolean not null default true,        -- true = filtre dur (doit être <= seuil)
   mode              text not null default 'transit',
   arrive_by         time not null default '09:00',       -- heure d'arrivée type (heure de pointe)
   created_at        timestamptz not null default now()
 );
 create index search_targets_profile_idx on search_targets (search_profile_id);
+-- Seed du couple (à créer à l'onboarding) :
+--   ('UPEC Juliette', <geo Créteil>, weight 0.6, max 50, hard true)
+--   ('École 42',      <geo Paris 17>, weight 0.4, max 50, hard true)
 
 -- ---------- Cache des temps de trajet, par (annonce × cible) ----------
 create table commute_times (
@@ -577,19 +580,24 @@ via `search_profiles.weights`.
 ### s_trajet (transit, multi-destinations) — poids 40
 
 Le critère roi, calculé **par cible** puis agrégé (moyenne pondérée par `search_targets.weight`).
-Exemple couple : École 42 (poids 0.5) + UPEC (poids 0.5).
+Config verrouillée pour le couple : **UPEC (poids 0.6) + École 42 (poids 0.4)** — on privilégie le
+trajet de Juliette dans le classement — **avec `hard = true` et `max = 50 min` pour les DEUX**.
 
 ```
 -- sous-score d'UNE cible i :
-s_i        = clamp(1 − (commute_i / max_i)^1.3 , 0, 1)     -- 0 min → 1 ; au seuil → ~0
+s_i        = clamp(1 − (commute_i / max_i)^1.3 , 0, 1)     -- 0 min → 1 ; au seuil (50) → ~0
 -- agrégat sur toutes les cibles du profil :
-s_trajet   = 100 · Σ(weight_i · s_i) / Σ(weight_i)
+s_trajet   = 100 · Σ(weight_i · s_i) / Σ(weight_i)          -- ex. 0.6·s_UPEC + 0.4·s_42
 ```
-- Une cible marquée `hard = true` dont `commute_i > max_i` → **annonce éliminée** (filtre dur par
-  personne : un appart infernal pour Juliette est exclu, quel que soit le reste).
-- `commute_i` **NULL** (non calculable) → cette cible est **retirée** de l'agrégat (poids ignoré).
-- Feature associée : **zone d'or** = intersection des isochrones de toutes les cibles (la carte
-  montre où habiter pour satisfaire 42 *et* l'UPEC).
+- **Filtre dur des deux côtés** : si `commute_UPEC > 50` **OU** `commute_42 > 50` → **annonce
+  éliminée** (aucun des deux ne doit subir plus de 50 min). Généralisé : toute cible `hard = true`
+  qui dépasse son `max` élimine l'annonce.
+- `commute_i` **NULL** (non calculable) → traité comme échec du filtre dur si `hard`, sinon retiré
+  de l'agrégat (poids ignoré). *(Une cible obligatoire dont on ne sait pas calculer le trajet ne
+  doit pas passer par défaut.)*
+- Le poids ne fait que **classer** parmi les survivants ; il ne relâche jamais le plafond de 50 min.
+- Feature associée : **zone d'or** = intersection des isochrones ≤50 min de 42 **et** de l'UPEC
+  (la carte montre où habiter pour satisfaire les deux).
 
 ### s_prix (vs marché) — poids 30
 
@@ -600,6 +608,16 @@ s_prix    = 100 · clamp( 0.5 + gap_pct / 0.6 , 0, 1 )
 ```
 - 30 % **sous** le marché → 100 ; au prix du marché → 50 ; 30 % **au-dessus** → 0.
 - `median_ppm2` lu dans `market_stats` par (arrondissement, meublé, tranche de pièces).
+
+**Source des `market_stats` (décidé)** — approche **hybride** :
+1. **Primaire : médiane interne roulante.** Un job nocturne agrège les `listings` actifs par
+   (arrondissement, meublé, tranche de pièces) → `median_ppm2` + `sample_size`. Avantage : couvre
+   **tout l'IDF** (pas que Paris), s'auto-met à jour, zéro dépendance externe. Fallback si
+   `sample_size` trop faible : remonter d'un cran (moyenne de l'arrondissement, toutes pièces).
+2. **Secondaire (Paris only) : encadrement des loyers** (open data `opendata.paris.fr`, loyers de
+   référence majorés par quartier/pièces/époque/meublé). Sert de **repère légal** : on calcule si le
+   loyer dépasse le **plafond légal** → badge **`loyer_encadrement_dépassé`** sur la fiche
+   (info + levier de négociation, pas un malus de score). Différenciateur produit sympa.
 
 ### s_fraicheur — poids 20 (demi-vie 12 h)
 
@@ -863,8 +881,5 @@ export interface Collector {
 ## Points restants à trancher au fil de l'eau
 
 - **Tarif exact Melo** et périmètre de la licence → à chiffrer avant Phase 6.
-- **Source des `market_stats`** (médiane prix/m² par quartier) : open data
-  (observatoires des loyers / encadrement des loyers Paris) vs calcul interne sur les annonces
-  collectées → décider en Phase 2.
 - **Proxies résidentiels FR** (budget) : nécessaires seulement à partir de Leboncoin (Phase 5).
 ```
