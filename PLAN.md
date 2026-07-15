@@ -49,7 +49,7 @@ Résumé exécutif — le détail et les justifications suivent dans les section
 |---|---|---|---|
 | 1 | 1re source à scraper | **PAP.fr** → **Bien'ici** → Leboncoin (API mobile) → SeLoger | PAP sans DataDome ; Bien'ici a une **API JSON** stable ; Leboncoin/SeLoger = DataDome, en dernier |
 | 2 | API temps de trajet | **PRIM / Île-de-France Mobilités** (moteur Navitia) | Gratuit, **20 000 req/jour**, données IDFM natives, `apikey` en header |
-| 3 | Collecte gratuite | **GitHub Actions, repo collecteur PUBLIC** (app privée à part) + keepalive + idempotence | Minutes **illimitées** en public ; Cloud Run Jobs en plan B si ponctualité critique |
+| 3 | Collecte gratuite | **Cloud Run Jobs + Cloud Scheduler** (cron fiable ~15 min) ; GitHub Actions pour proto/fallback | La **vitesse** est le produit → cron ponctuel requis ; free tier permanent GCP |
 | 4 | Modèle de données | Schéma ci-dessous, dédup **2 niveaux** (`content_hash` intra + `dedup_key`/`listing_groups` inter-sources) | RLS multi-tenant : pool `listings` partagé, dérivés user isolés |
 | 5 | Scoring | Formule 0-100 pondérée **trajet 40 / prix-marché 30 / fraîcheur 20 / base 10**, ×malus anti-arnaque | Le trajet transit domine, l'arnaque agit en multiplicateur |
 
@@ -178,10 +178,22 @@ doc.navitia.io ; developers.google.com/maps (changements mars 2025, Routes API b
 
 # 3. COLLECTE GRATUITE — le montage cron GitHub Actions + Playwright tient-il ?
 
-## ✅ Décision : **GitHub Actions sur dépôt PUBLIC** (minutes illimitées) + keepalive + idempotence. **Cloud Run Jobs** en plan B si la ponctualité devient critique.
+## ✅ Décision : **Google Cloud Run Jobs + Cloud Scheduler** en primaire (cron fiable ~5-10 min). GitHub Actions gardé comme démarrage rapide / fallback.
 
-Le montage **GitHub Actions cron + Playwright + Supabase fonctionne et reste 100 % gratuit**, mais
-**seulement sur dépôt PUBLIC** et en acceptant que la cadence réelle soit **« best effort »**.
+**Pourquoi Cloud Run et pas GitHub Actions.** Le produit vend la **vitesse** (« être le premier à
+contacter »). Or le cron GitHub Actions **dérive de 20-90 min et saute des runs** → incompatible avec
+« premier arrivé ». **Cloud Run Jobs + Cloud Scheduler** donne un cron **précis et fiable** (~5-10 min),
+un **vrai container Playwright**, et reste **gratuit** dans le free tier permanent : **180 000 vCPU-s/mois**
+(~50 h CPU), Scheduler 3 jobs gratuits (il en faut 1). Calcul : toutes les 10 min = 4 320 runs × ~60 s ×
+1 vCPU = ~259 200 vCPU-s → **au-dessus des 180 000** → viser **toutes les 15 min** (~172 800 vCPU-s, ça passe)
+ou raccourcir les jobs. Piège : compte GCP avec CB (mais free tier réel, pas un crédit d'essai) + image Docker.
+
+**GitHub Actions reste utile** pour **prototyper le collecteur** en Phase 0/1 (zéro infra) avant de
+conteneuriser, et comme **fallback** gratuit. Son montage détaillé (dépôt public, keepalive,
+idempotence) est documenté ci-dessous car les mêmes garde-fous s'appliquent à Cloud Run.
+
+Le montage **cron + Playwright + Supabase fonctionne et reste 100 % gratuit** ; sur GitHub Actions
+c'est **seulement sur dépôt PUBLIC** et en acceptant une cadence **« best effort »**.
 
 ### Ce qui est vrai (faits chiffrés 2025-2026)
 
@@ -335,10 +347,12 @@ create index listings_arr_idx     on listings (arrondissement);
 
 -- ---------- Utilisateurs (miroir de auth.users) ----------
 create table profiles (
-  id           uuid primary key references auth.users(id) on delete cascade,
-  email        text,
-  display_name text,
-  created_at   timestamptz not null default now()
+  id                uuid primary key references auth.users(id) on delete cascade,
+  email             text,
+  display_name      text,
+  contact_template  text,        -- template de message fourni par l'user (variables prénom/dossier/dispos)
+  dossierfacile_url text,        -- lien DossierFacile injecté dans le message de contact
+  created_at        timestamptz not null default now()
 );
 
 -- ---------- Critères de recherche par utilisateur ----------
@@ -666,10 +680,14 @@ pour l'afficher dans la fiche (transparence du « pourquoi ce score »).
 
 Le cœur du produit, c'est **le moment où on décide en 10 secondes**. Décisions tranchées :
 
-## Forme : feed inbox piloté au clavier (power-user d'abord)
+## Forme : PWA responsive — desktop clavier + mobile au pouce
 
-Écran principal = **liste dense triée par score**, façon Superhuman/Linear. Optimisé pour *toi*
-qui chasses à fond ; on « habillera » grand public pour le SaaS plus tard.
+**Une seule app installable** (PWA, requise pour le Web Push), deux modes selon l'écran :
+- **Desktop** : **feed inbox dense piloté au clavier**, façon Superhuman/Linear. Le triage à fond.
+- **Mobile** (là où tu chasses vraiment, en déplacement) : cartes tapables, **swipe ⭐ / 🚫**,
+  push qui deep-linke direct sur la fiche. C'est le mode « je réagis à une alerte en 20 s ».
+
+Optimisé pour *toi* d'abord ; on « habillera » grand public pour le SaaS plus tard.
 
 **Anatomie d'une ligne (la décision en 10s) :**
 ```
@@ -702,8 +720,17 @@ les 4 signaux visibles sans cliquer. Flags arnaque en rouge si présents.
   depuis 42 **et** l'UPEC → « où chercher pour nous deux ». Différenciateur fort vs les portails.
 - **État perso par annonce** — shortlist / masquer / statut pipeline / note (`user_listing_states`).
   Sans « masquer », on revoit sans fin les mêmes annonces : indispensable, oublié des 2 plans.
-- **Message de contact pré-rempli** — template « bonjour, dossier ici [lien], dispo pour visiter »
-  en un clic. Dans une course, gagner 2 min/annonce = décisif.
+- **Contact rapide (le moment qui fait gagner la course)** — le contact réel reste **chez la source**
+  (RGPD : on ne stocke pas les coordonnées, on les utilise à la volée). Boutons contextuels selon ce
+  que l'annonce expose :
+  - **☎ Appeler** (`tel:`) quand un numéro est visible.
+  - **✉ Mail** quand un email est exposé → ouvre un **brouillon Gmail pré-rempli** (destinataire +
+    objet + corps) via `https://mail.google.com/mail/?view=cm&fs=1&to=…&su=…&body=…`, repli `mailto:`.
+  - **↗ Ouvrir l'annonce source** (deep-link) pour le formulaire/messagerie du site.
+  - Le **corps du message** vient d'un **template fourni par l'utilisateur** (à brancher — *ne pas
+    réinventer*), avec variables (prénom, **lien DossierFacile**, disponibilités).
+  - Cliquer « Contacter » **bascule l'annonce en statut `contacted`** (horodaté) dans
+    `user_listing_states` → anti-recontact, suivi automatique dans le pipeline.
 - **Badge dédup** — « aussi sur PAP + Bien'ici » sur l'annonce canonique (rassure sur la couverture).
 - **Breakdown de score transparent** — chaque annonce explique son score (les 4 composantes),
   pour instaurer la confiance et permettre d'ajuster ses pondérations.
@@ -728,8 +755,9 @@ le même appart physique, même posté sur 2 sites).
   - Auth + **RLS** → multi-tenant propre.
   - **Realtime** → nouvelles annonces en direct dans le dashboard.
   - Storage → pièces du dossier.
-- **Collecte** : collecteurs **Playwright (TS)** via **cron GitHub Actions (dépôt public)** →
-  écriture Supabase par **REST**. Interface `Collector` commune → swap Melo plus tard.
+- **Collecte** : collecteurs **Playwright (TS)** dans un **container Cloud Run Job** déclenché par
+  **Cloud Scheduler** (~15 min, fiable) → écriture Supabase par **REST**. GitHub Actions (dépôt
+  public) pour prototyper/fallback. Interface `Collector` commune → swap Melo plus tard.
 - **Trajet / géo** : **PRIM / IDFM (Navitia)** — voir §2.
 - **Alertes email** : **Resend** (free tier) ; temps réel in-app via Supabase Realtime.
 
@@ -757,8 +785,9 @@ Chaque tranche = fonctionnelle de bout en bout, testée dans l'app réelle, puis
 - **Phase 0 — Fondations.** (détail ci-dessous) Scaffolding Next.js + Supabase + auth + déploiement
   Vercel + migration `0001_init.sql`. *Livrable : je me connecte sur l'URL prod, une ligne `profiles` apparaît.*
 - **Phase 1 — Pipeline bout-en-bout, source PAP.** Collecteur Playwright PAP, normalisation +
-  dédup (`content_hash` + `dedup_key`), cron GitHub Actions (dépôt public) + keepalive, annonces
-  brutes affichées. *Livrable : des annonces réelles arrivent seules dans la liste.*
+  dédup (`content_hash` + `dedup_key`), déploiement en **Cloud Run Job + Cloud Scheduler** (~15 min)
+  — proto possible d'abord en GitHub Actions —, annonces brutes affichées.
+  *Livrable : des annonces réelles arrivent seules dans la liste.*
 - **Phase 2 — Critères + scoring + feed.** Onboarding `search_profile` avec **N destinations**
   (42 + UPEC), calcul **trajet PRIM multi-cibles** (+ cache), `market_stats`, formule de score,
   **feed inbox au clavier** trié + filtres + shortlist/masquer (`user_listing_states`).
@@ -808,13 +837,12 @@ npm i -D playwright        # pour les collecteurs (Phase 1)
   scoring.ts                      → formule §5 (pur, testable)
   commute.ts                      → appel PRIM + cache commute_times (P2)
   dedup.ts                        → content_hash + dedup_key (P1)
-/collectors
+/collectors  (→ repo PUBLIC séparé en P1 ; app privée par ailleurs)
   types.ts                        → interface Collector (CLÉ du swap Melo)
   pap.ts                          → 1er collecteur (P1)
-  run.ts                          → point d'entrée appelé par le cron
-/.github/workflows
-  collect.yml                     → cron GitHub Actions (P1)
-  keepalive.yml                   → anti-désactivation 60 j
+  run.ts                          → point d'entrée (Cloud Run Job / cron)
+  Dockerfile                      → container Playwright pour Cloud Run (P1)
+  .github/workflows/collect.yml   → proto/fallback GitHub Actions (optionnel)
 /supabase/migrations
   0001_init.sql                   → schéma §4 (à exécuter dès P0)
 ```
@@ -869,7 +897,8 @@ export interface Collector {
 | Risque | Réalité | Mitigation |
 |---|---|---|
 | **Fragilité scraping** | Leboncoin/SeLoger = DataDome ML (détection par intention 2025) ; casse quand le site change | Démarrer PAP (pas de DataDome) ; isoler chaque source derrière `Collector` ; monitoring + désactivation rapide |
-| **Cron GitHub non ponctuel** | Retards 5-30 min, runs sautés, désactivation à 60 j | Dépôt public + keepalive + **UPSERT idempotent** ; Cloud Run Jobs en plan B |
+| **Cadence de collecte** | GitHub Actions dérive (20-90 min) → mauvais pour « être premier » | **Cloud Run Jobs + Scheduler** en primaire (~15 min fiable) ; **UPSERT idempotent** ; Actions en proto/fallback |
+| **Latence bout-en-bout** | Le vrai KPI « vitesse » = collecte→scoring→push | Scoring déclenché à l'insertion ; push immédiat ; viser < quelques min |
 | **Free tier Supabase** | Pause 7 j, DB 500 Mo, egress 5 Go | Scraper garde le projet actif ; purger `raw` + annonces mortes ; vignettes, pas photos pleines |
 | **Quota PRIM** | 20 000/j (large) mais relevé à demander si comptes récents | Cache `commute_times` par (géo × cible) ; datetime standardisé ; fallback Google Routes |
 | **Légal / droit BDD (sui generis)** | Précédent LBC 2021 (50 k€) contre agrégateur republiant | Modèle **index + lien profond**, pas de copie intégrale ni coordonnées perso ; faible volume perso au MVP |
