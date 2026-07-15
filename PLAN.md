@@ -323,6 +323,8 @@ create table listings (
   arrondissement smallint,                       -- 1..20 (Paris) ; null hors Paris
   geo           geography(Point, 4326),          -- PostGIS (lon,lat)
   thumb_url     text,                            -- vignette (pas la photo pleine)
+  photo_hashes  text[] default '{}',             -- hash perceptuel des photos (dédup + anti-arnaque)
+  photo_cluster_id uuid,                          -- regroupe les annonces partageant des photos
 
   content_hash  text not null,                   -- détecte les MAJ de contenu
   dedup_key     text not null,                   -- clé de dédup inter-sources
@@ -410,6 +412,15 @@ create table market_stats (
   primary key (arrondissement, furnished, rooms_bucket)
 );
 
+-- ---------- Historique de prix (append à chaque changement détecté) ----------
+create table listing_price_events (
+  id          uuid primary key default gen_random_uuid(),
+  listing_id  uuid not null references listings(id) on delete cascade,
+  price_total integer not null,                    -- loyer CC observé
+  seen_at     timestamptz not null default now()
+);
+create index price_events_listing_idx on listing_price_events (listing_id, seen_at);
+
 -- ---------- Matches (annonce × profil) avec score ----------
 create table matches (
   id                uuid primary key default gen_random_uuid(),
@@ -491,16 +502,18 @@ create index push_user_idx on push_subscriptions (user_id);
 ```sql
 -- Pool partagé : lisible par tout utilisateur authentifié, écrit par le service_role
 -- (les collecteurs utilisent la clé service → bypass RLS).
-alter table sources        enable row level security;
-alter table listings       enable row level security;
-alter table listing_groups enable row level security;
-alter table market_stats   enable row level security;
-alter table commute_times  enable row level security;
+alter table sources             enable row level security;
+alter table listings            enable row level security;
+alter table listing_groups      enable row level security;
+alter table market_stats        enable row level security;
+alter table commute_times       enable row level security;
+alter table listing_price_events enable row level security;
 
-create policy "read pool listings"  on listings       for select to authenticated using (true);
-create policy "read pool sources"   on sources        for select to authenticated using (true);
-create policy "read pool groups"    on listing_groups for select to authenticated using (true);
-create policy "read market"         on market_stats   for select to authenticated using (true);
+create policy "read pool listings"  on listings             for select to authenticated using (true);
+create policy "read pool sources"   on sources              for select to authenticated using (true);
+create policy "read pool groups"    on listing_groups       for select to authenticated using (true);
+create policy "read market"         on market_stats         for select to authenticated using (true);
+create policy "read price events"   on listing_price_events for select to authenticated using (true);
 -- commute_times est lié à une cible d'un user → lecture réservée au propriétaire (pas le pool).
 create policy "own commute" on commute_times for select to authenticated using (
   exists (select 1 from search_targets t
@@ -646,19 +659,42 @@ s_fraicheur  = 100 · 0.5^(age_h / 12)
 Bonus/malus d'adéquation fine, normalisé 0-100 : marge budget restante, surface au-delà du minimum,
 DPE (A-C bonus, F-G malus), meublé conforme à la préférence, ascenseur si étage élevé, etc.
 
-### m_arnaque — multiplicateur ∈ [0, 1]
+### m_arnaque — multiplicateur ∈ [0, 1] (Paris = nid à arnaques)
 
-Chaque flag lève un item dans `matches.fraud_flags` et rabat le score :
+Deux moments de détection : **à l'ingestion** (motifs texte, photos, cohérence — pas cher) et
+**au scoring** (tout ce qui est relatif au marché). Chaque flag lève un item dans
+`matches.fraud_flags` et rabat le score.
 
-| Flag | Détection | Effet sur `m_arnaque` |
-|---|---|---|
-| `prix_trop_bas` | `ppm2 < 0.5 · median_ppm2` (loyer anormalement bas = appât classique) | ×0.4 |
-| `contact_hors_plateforme` | desc/contenu matche WhatsApp, email direct, « je suis à l'étranger », Western Union, virement avant visite | ×0.3 |
-| `sans_photo` | 0 photo ou vignette générique/dupliquée | ×0.7 |
-| `incoherence` | surface/prix/pièces incohérents (ex. 150 m² à 600 € CC) | ×0.6 |
-| `texte_suspect` | fautes/formules types arnaque, urgence excessive | ×0.8 |
+| Flag | Détection | Quand | Effet |
+|---|---|---|---|
+| `prix_trop_bas` | `ppm2 < 0.5 · median_ppm2` (appât classique) | scoring | ×0.4 · 🔴 |
+| `paiement_avant_visite` | motifs texte : « caution avant », « à l'étranger », Western Union, clés par la poste | ingestion | ×0.3 · 🔴 |
+| `contact_hors_plateforme` | email/WhatsApp direct poussé dans le corps | ingestion | ×0.5 |
+| `photos_reutilisees` | hash photo vu dans ≥3 annonces distinctes (cf. ci-dessous) | ingestion | ×0.4 · 🔴 |
+| `sans_photo` | 0 image | ingestion | ×0.7 |
+| `incoherence` | surface/prix/pièces incohérents (ex. 150 m² à 600 € CC) | ingestion | ×0.6 |
+| `dpe_absent` | DPE manquant (obligatoire légalement) | ingestion | 🟡 léger |
+| `loyer_encadrement_depasse` | > plafond légal (open data Paris) | scoring | 🟡 **info, pas de malus** (levier de négo) |
 
-`m_arnaque = produit des multiplicateurs` (borné à ≥0.1). Plusieurs flags se cumulent → écrase le score.
+`m_arnaque = produit des multiplicateurs` (borné à ≥0.1). Cumul de flags → écrase le score.
+
+**Badge de confiance** (sur les cartes ET la fiche) : 🟢 clean / 🟡 à vérifier / 🔴 signaux forts,
+dérivé des flags. On **downrank mais on ne masque jamais** : les flags **et** les scores restent
+affichés, l'utilisateur tranche avec l'info (+ conseil « ne payez jamais avant d'avoir visité »).
+
+### Cluster photos réutilisées — « trouver la vraie annonce »
+
+Une arnaque qui vole des photos coexiste souvent avec la **vraie** annonce. Donc on ne se contente
+pas de tout flaguer : dans un **cluster** (≥3 annonces partageant ≥1 `photo_hash`, même
+`photo_cluster_id`), un job élit la version **la plus crédible** :
+
+1. **prix ≥ médiane du cluster** (les arnaques cassent le prix → l'outlier bon marché = suspect) ;
+2. **`first_seen` la plus ancienne** (l'original précède les copies) ;
+3. **source agence / fiche plus complète** (DPE présent) en départage.
+
+Le membre élu = référence crédible ; les **outliers bon marché** reçoivent `photos_reutilisees` +
+pointeur vers elle. UI : sur un suspect → *« ⚠ photos réutilisées sur N annonces — la plus crédible :
+[lien] »* ; on downrank le faux **et** on met la vraie en avant.
 
 ## Exemple chiffré
 
@@ -735,6 +771,41 @@ les 4 signaux visibles sans cliquer. Flags arnaque en rouge si présents.
 - **Breakdown de score transparent** — chaque annonce explique son score (les 4 composantes),
   pour instaurer la confiance et permettre d'ajuster ses pondérations.
 
+## Onboarding + zone d'or
+
+Premier écran après login, 4 étapes :
+1. **Destinations** — géocodage via **BAN** (`api-adresse.data.gouv.fr`, gratuit, sans clé). Ajouter
+   N pôles ; pour l'instance perso, **pré-remplir UPEC (0.6) + École 42 (0.4)**, `max 50`, `hard`.
+2. **Budget & bien** — budget CC, surface min, pièces min, meublé (indifférent/oui/non).
+3. **Zone d'or** — on demande à PRIM les **isochrones ≤50 min** de chaque destination, on les
+   **intersecte** (turf.js) → le polygone « où habiter pour vous deux », affiché sur la carte
+   (effet wow) + communes suggérées. Remplace la sélection manuelle de quartiers.
+4. **Alertes** — score min, activation des canaux (le prompt Web Push se déclenche ici).
+
+**Optimisation clé** : le polygone zone d'or sert de **pré-filtre géo PostGIS** (`ST_Within`) → on
+n'appelle PRIM pour le trajet précis **que** sur les annonces déjà dans la zone. Économise beaucoup
+d'appels API (et respecte le quota 20k/j confortablement).
+
+## Fiche annonce (le détail — décider en 30 s)
+
+- **Breakdown de score transparent** (barres par composante) — confiance + réglage des poids.
+- **Itinéraires réels par cible** depuis `sections[]` de PRIM (« M8 → RER A »), pas juste un nombre.
+- **Carte + isochrones** : pin de l'annonce, marqueur « ✓ dans la zone d'or ».
+- **Prix** : écart vs médiane quartier (−18%), badge encadrement si dépassé, **historique de prix**
+  (`listing_price_events`) → « baissé de 50€ il y a 2j ».
+- **Panneau Vérifs** : flags anti-arnaque + conseil ; si `photos_reutilisees`, lien vers la version
+  crédible du cluster.
+- **Dédup** : « aussi sur PAP · Bien'ici » avec liens vers chaque source.
+- **Photos** : vignettes **hotlinkées** / lien source, **pas de réhébergement** (copyright + storage).
+- **Actions** : contact (appel/mail/source) + shortlist/masquer + statut pipeline.
+
+## Dossier — réduit au strict minimum
+
+Décision user : **le lien DossierFacile suffit**. On ne construit **pas** de module dossier ;
+seul `profiles.dossierfacile_url` est nécessaire (injecté dans le message de contact). La table
+`dossier_items` est **reportée/optionnelle** (à ressortir seulement si un besoin de pièces custom
+émerge plus tard).
+
 ## Alertes — empilement (pas de Telegram)
 
 1. **In-app Realtime** (Supabase) — l'annonce surgit dans le feed quand l'app est ouverte.
@@ -794,8 +865,9 @@ Chaque tranche = fonctionnelle de bout en bout, testée dans l'app réelle, puis
   *Livrable : je vois MES annonces classées et je trie au clavier.*
 - **Phase 3 — Alertes.** Realtime in-app + **Web Push (PWA/VAPID)** + email Resend, anti-doublon par
   `alert_deliveries` et `group_id`. *Livrable : prévenu dans la minute d'un appart qui matche, une seule fois.*
-- **Phase 4 — Pipeline + dossier.** Kanban de suivi de chasse (statuts + notes) ; upload pièces +
-  champs extra + lien DossierFacile + message de contact pré-rempli.
+- **Phase 4 — Pipeline + contact.** Kanban de suivi de chasse (statuts + notes) ; **contact rapide**
+  (appel / mail Gmail pré-rempli / lien source) branché sur **ton template** + lien DossierFacile,
+  bascule auto en « contacté ». *(Pas de module dossier : le lien DossierFacile suffit.)*
 - **Phase 5 — Robustesse & sources.** Ajout **Bien'ici (API JSON)**, puis **Leboncoin (API mobile)**,
   puis **SeLoger** ; monitoring des collecteurs qui cassent, dédup inter-sources fine (`listing_groups`).
 - **Phase 6 — Commercialisation.** Bascule collecteur → **API Melo**, **Stripe**, onboarding
