@@ -47,9 +47,9 @@ Résumé exécutif — le détail et les justifications suivent dans les section
 
 | # | Point ouvert | **Décision tranchée** | Pourquoi en une ligne |
 |---|---|---|---|
-| 1 | 1re source à scraper | **PAP.fr** (puis Leboncoin API mobile, puis SeLoger) | Seule des 3 **sans DataDome** → pipeline prouvé en jours, pas en semaines |
+| 1 | 1re source à scraper | **PAP.fr** → **Bien'ici** → Leboncoin (API mobile) → SeLoger | PAP sans DataDome ; Bien'ici a une **API JSON** stable ; Leboncoin/SeLoger = DataDome, en dernier |
 | 2 | API temps de trajet | **PRIM / Île-de-France Mobilités** (moteur Navitia) | Gratuit, **20 000 req/jour**, données IDFM natives, `apikey` en header |
-| 3 | Collecte gratuite | **GitHub Actions sur dépôt PUBLIC** + keepalive + idempotence | Minutes **illimitées** en public ; Cloud Run Jobs en plan B si ponctualité critique |
+| 3 | Collecte gratuite | **GitHub Actions, repo collecteur PUBLIC** (app privée à part) + keepalive + idempotence | Minutes **illimitées** en public ; Cloud Run Jobs en plan B si ponctualité critique |
 | 4 | Modèle de données | Schéma ci-dessous, dédup **2 niveaux** (`content_hash` intra + `dedup_key`/`listing_groups` inter-sources) | RLS multi-tenant : pool `listings` partagé, dérivés user isolés |
 | 5 | Scoring | Formule 0-100 pondérée **trajet 40 / prix-marché 30 / fraîcheur 20 / base 10**, ×malus anti-arnaque | Le trajet transit domine, l'arnaque agit en multiplicateur |
 
@@ -57,7 +57,7 @@ Résumé exécutif — le détail et les justifications suivent dans les section
 
 # 1. SOURCES — quelle première source scraper ?
 
-## ✅ Décision : **démarrer par PAP.fr**, puis Leboncoin (API mobile), puis SeLoger.
+## ✅ Décision : **démarrer par PAP.fr**, puis **Bien'ici**, puis Leboncoin (API mobile), puis SeLoger.
 
 **Pourquoi PAP en premier.** C'est **la seule des trois sans DataDome**. Portail 100 %
 particuliers, protections légères (rate-limit IP, éventuel reCAPTCHA en volume), scrapable
@@ -71,10 +71,13 @@ donc des annonces exclusives pertinentes.
 **Ordre d'ajout ensuite (logique : fiabilité d'abord, volume ensuite, coriace en dernier) :**
 
 1. **PAP.fr** — MVP. Dérisque tout le pipeline sur une source qui ne se bat pas contre vous.
-2. **Leboncoin via API mobile non-officielle** — le **plus gros volume** (>1 M annonces,
-   ~20 % PDM location IDF). L'API JSON mobile est bien plus tractable que le site web (protégé
-   DataDome), **à condition** d'ajouter TLS-impersonation + proxies résidentiels FR.
-3. **SeLoger** (groupe Aviv) — **leader volume IDF (~33 % PDM, réseau agences)** donc très désirable,
+2. **Bien'ici** — SPA Angular **mais API JSON publique** (prix, €/m², DPE, GPS structurés) → bien
+   plus **stable** qu'un scrape DOM et **sans DataDome**. Stock surtout agences (cap ~2500/recherche),
+   mais c'est le meilleur « 2e » : gros gain de volume pour un effort faible et robuste.
+3. **Leboncoin via API mobile non-officielle** — le **plus gros volume** (>1 M annonces,
+   ~20 % PDM location IDF). L'API JSON mobile est plus tractable que le site web (protégé
+   DataDome), **à condition** d'ajouter TLS-impersonation + proxies résidentiels FR. Fragile.
+4. **SeLoger** (groupe Aviv) — **leader volume IDF (~33 % PDM, réseau agences)** donc très désirable,
    mais **le plus cher à scraper** : DataDome agressif, boucles de captcha, pas d'API mobile propre.
    À n'attaquer qu'une fois l'infra anti-DataDome rodée sur Leboncoin (elle se réutilise).
 
@@ -196,7 +199,9 @@ Le montage **GitHub Actions cron + Playwright + Supabase fonctionne et reste 100
 
 ### Conséquences de conception (obligatoires)
 
-1. **Dépôt public** (⚠️ ne jamais y committer de secret : clés Supabase/PRIM en **GitHub Secrets**).
+1. **Split 2 dépôts** : un repo **collecteur PUBLIC** (minutes Actions illimitées, code de scraping
+   isolé) + le repo **app PRIVÉ** (Next.js). Évite d'exposer l'app, découple la bascule Melo.
+   ⚠️ Aucun secret dans le repo public : clés Supabase `service_role`/PRIM en **GitHub Secrets**.
 2. **Keepalive workflow** anti-désactivation 60 j.
 3. **Idempotence** : chaque run fait un **`upsert` par (source, external_id)** → absorbe les runs
    sautés **et** doublés sans créer de doublons.
@@ -346,23 +351,36 @@ create table search_profiles (
   rooms_min       smallint,
   furnished       boolean,                        -- null = indifférent
   arrondissements smallint[],                      -- zones ciblées (Paris)
-  target_address  text,                            -- adresse cible (ex. travail)
-  target_geo      geography(Point, 4326),
-  max_commute_min smallint not null default 45,   -- seuil de trajet transit
   weights         jsonb,                           -- surcharge pondération scoring (optionnel)
   active          boolean not null default true,
   created_at      timestamptz not null default now()
 );
 create index search_profiles_user_idx on search_profiles (user_id);
 
--- ---------- Cache des temps de trajet (mutualisé entre profils) ----------
+-- ---------- Destinations de trajet (multi-cibles pondérées) ----------
+-- Un profil peut viser plusieurs pôles (ex. École 42 + UPEC pour un couple).
+create table search_targets (
+  id                uuid primary key default gen_random_uuid(),
+  search_profile_id uuid not null references search_profiles(id) on delete cascade,
+  label             text not null,                 -- 'École 42', 'UPEC Juliette'
+  geo               geography(Point, 4326) not null,
+  weight            numeric(4,2) not null default 1.0,   -- poids dans le score trajet
+  max_commute_min   smallint not null default 45,        -- seuil pour CETTE cible
+  hard              boolean not null default false,      -- true = filtre dur (doit être <= seuil)
+  mode              text not null default 'transit',
+  arrive_by         time not null default '09:00',       -- heure d'arrivée type (heure de pointe)
+  created_at        timestamptz not null default now()
+);
+create index search_targets_profile_idx on search_targets (search_profile_id);
+
+-- ---------- Cache des temps de trajet, par (annonce × cible) ----------
 create table commute_times (
   listing_id   uuid not null references listings(id) on delete cascade,
-  target_hash  text not null,                    -- hash de la géo cible arrondie
+  target_id    uuid not null references search_targets(id) on delete cascade,
   duration_min smallint,                          -- null = non calculable
   transfers    smallint,
   computed_at  timestamptz not null default now(),
-  primary key (listing_id, target_hash)
+  primary key (listing_id, target_id)
 );
 
 -- ---------- Prix de marché de référence (pour l'écart prix/m²) ----------
@@ -398,7 +416,8 @@ create index matches_group_idx on matches (search_profile_id, group_id);
 create table alert_prefs (
   search_profile_id uuid primary key references search_profiles(id) on delete cascade,
   email_enabled     boolean not null default true,
-  inapp_enabled     boolean not null default true,
+  inapp_enabled     boolean not null default true,   -- Realtime dans le feed
+  webpush_enabled   boolean not null default true,   -- notification navigateur (PWA)
   min_score         numeric(5,2) not null default 70,
   updated_at        timestamptz not null default now()
 );
@@ -407,7 +426,7 @@ create table alert_prefs (
 create table alert_deliveries (
   id         uuid primary key default gen_random_uuid(),
   match_id   uuid not null references matches(id) on delete cascade,
-  channel    text not null check (channel in ('email','inapp')),
+  channel    text not null check (channel in ('email','inapp','webpush')),
   sent_at    timestamptz not null default now(),
   unique (match_id, channel)                     -- 1 envoi max par canal
 );
@@ -423,6 +442,31 @@ create table dossier_items (
   created_at timestamptz not null default now()
 );
 create index dossier_user_idx on dossier_items (user_id);
+
+-- ---------- État perso par annonce : shortlist / masquer / pipeline de chasse ----------
+create table user_listing_states (
+  user_id     uuid not null references profiles(id) on delete cascade,
+  listing_id  uuid not null references listings(id) on delete cascade,
+  status      text not null default 'new'
+              check (status in ('new','to_contact','contacted','visit','applied','taken','rejected')),
+  starred     boolean not null default false,     -- shortlist ⭐
+  hidden      boolean not null default false,     -- masquer 🚫 (ne plus revoir)
+  note        text,
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, listing_id)
+);
+create index uls_status_idx on user_listing_states (user_id, status);
+
+-- ---------- Abonnements Web Push (une ligne par appareil/navigateur) ----------
+create table push_subscriptions (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references profiles(id) on delete cascade,
+  endpoint    text not null unique,
+  p256dh      text not null,
+  auth        text not null,
+  created_at  timestamptz not null default now()
+);
+create index push_user_idx on push_subscriptions (user_id);
 ```
 
 ## RLS — multi-tenant
@@ -440,8 +484,12 @@ create policy "read pool listings"  on listings       for select to authenticate
 create policy "read pool sources"   on sources        for select to authenticated using (true);
 create policy "read pool groups"    on listing_groups for select to authenticated using (true);
 create policy "read market"         on market_stats   for select to authenticated using (true);
-create policy "read commute"        on commute_times  for select to authenticated using (true);
--- (aucune policy insert/update pour authenticated ⇒ seul service_role écrit)
+-- commute_times est lié à une cible d'un user → lecture réservée au propriétaire (pas le pool).
+create policy "own commute" on commute_times for select to authenticated using (
+  exists (select 1 from search_targets t
+          join search_profiles sp on sp.id = t.search_profile_id
+          where t.id = commute_times.target_id and sp.user_id = auth.uid()));
+-- (aucune policy insert/update pour authenticated ⇒ seul service_role écrit le pool + les caches)
 
 -- Profiles : chacun ne voit/modifie que sa ligne.
 alter table profiles enable row level security;
@@ -449,17 +497,35 @@ create policy "own profile" on profiles
   for all to authenticated using (id = auth.uid()) with check (id = auth.uid());
 
 -- Données dérivées de l'utilisateur : isolées par user_id / lien de parenté.
-alter table search_profiles  enable row level security;
-alter table matches          enable row level security;
-alter table alert_prefs      enable row level security;
-alter table alert_deliveries enable row level security;
-alter table dossier_items    enable row level security;
+alter table search_profiles     enable row level security;
+alter table search_targets      enable row level security;
+alter table matches             enable row level security;
+alter table alert_prefs         enable row level security;
+alter table alert_deliveries    enable row level security;
+alter table dossier_items       enable row level security;
+alter table user_listing_states enable row level security;
+alter table push_subscriptions  enable row level security;
 
 create policy "own search_profiles" on search_profiles
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 create policy "own dossier" on dossier_items
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+create policy "own listing states" on user_listing_states
+  for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+create policy "own push subs" on push_subscriptions
+  for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- search_targets : possédés via le search_profile parent.
+create policy "own targets" on search_targets
+  for all to authenticated using (
+    exists (select 1 from search_profiles sp
+            where sp.id = search_targets.search_profile_id and sp.user_id = auth.uid()))
+  with check (
+    exists (select 1 from search_profiles sp
+            where sp.id = search_targets.search_profile_id and sp.user_id = auth.uid()));
 
 -- matches / alert_prefs / alert_deliveries : possédés via le search_profile parent.
 create policy "own matches" on matches
@@ -508,13 +574,22 @@ score_final = ( 0.40 · s_trajet          -- le critère roi à Paris (transit r
 Chaque `s_*` est normalisé sur **[0, 100]**. Pondérations par défaut surchargeables par utilisateur
 via `search_profiles.weights`.
 
-### s_trajet (transit) — poids 40
+### s_trajet (transit, multi-destinations) — poids 40
+
+Le critère roi, calculé **par cible** puis agrégé (moyenne pondérée par `search_targets.weight`).
+Exemple couple : École 42 (poids 0.5) + UPEC (poids 0.5).
 
 ```
-s_trajet = 100 · clamp(1 − (commute_min / max_commute_min)^1.3 , 0, 1)
+-- sous-score d'UNE cible i :
+s_i        = clamp(1 − (commute_i / max_i)^1.3 , 0, 1)     -- 0 min → 1 ; au seuil → ~0
+-- agrégat sur toutes les cibles du profil :
+s_trajet   = 100 · Σ(weight_i · s_i) / Σ(weight_i)
 ```
-- 0 min → 100 ; au seuil `max_commute_min` → ~0 ; l'exposant 1.3 récompense fortement les trajets courts.
-- `commute_min` **NULL** (non calculable) → `s_trajet` **neutralisé** (retiré, poids redistribué).
+- Une cible marquée `hard = true` dont `commute_i > max_i` → **annonce éliminée** (filtre dur par
+  personne : un appart infernal pour Juliette est exclu, quel que soit le reste).
+- `commute_i` **NULL** (non calculable) → cette cible est **retirée** de l'agrégat (poids ignoré).
+- Feature associée : **zone d'or** = intersection des isochrones de toutes les cibles (la carte
+  montre où habiter pour satisfaire 42 *et* l'UPEC).
 
 ### s_prix (vs marché) — poids 30
 
@@ -569,6 +644,64 @@ pour l'afficher dans la fiche (transparence du « pourquoi ce score »).
 
 ---
 
+# 6. PRODUIT & UI (décidé)
+
+Le cœur du produit, c'est **le moment où on décide en 10 secondes**. Décisions tranchées :
+
+## Forme : feed inbox piloté au clavier (power-user d'abord)
+
+Écran principal = **liste dense triée par score**, façon Superhuman/Linear. Optimisé pour *toi*
+qui chasses à fond ; on « habillera » grand public pour le SaaS plus tard.
+
+**Anatomie d'une ligne (la décision en 10s) :**
+```
+█ SCORE 87  • il y a 8 min          ⭐ 🚫
+32 m² · 1200 € CC · Paris 12e · meublé
+🚇 42: 24 min   🚇 UPEC: 31 min   💶 -15% marché   DPE D
+```
+Le **score**, les **trajets par cible**, l'**écart de prix vs marché** et la **fraîcheur** sont
+les 4 signaux visibles sans cliquer. Flags arnaque en rouge si présents.
+
+**Raccourcis clavier :** `j/k` naviguer · `Enter/→` fiche · `s` shortlist ⭐ · `x` masquer 🚫 ·
+`c` message de contact · `1–5` statut pipeline · `f` filtres.
+
+**Onglets :** **Feed** (nouveau, non masqué) · **Shortlist** · **Pipeline** (kanban) · **Masqués**.
+
+## Écrans
+
+| Écran | Rôle | Points clés |
+|---|---|---|
+| **Feed** | Trier vite | Liste clavier, cartes 10s, filtres chips, tri score/fraîcheur |
+| **Fiche annonce** | Approfondir | « Pourquoi ce score » (breakdown JSON), carte + **isochrones** par cible, photos, **lien source**, actions rapides, message de contact pré-rempli |
+| **Onboarding / critères** | Définir la recherche | Budget, surface, pièces, zones + **N destinations** (label, adresse, poids, seuil) |
+| **Pipeline** | Suivi de chasse (mini-CRM) | Kanban `à contacter → contacté → visite → dossier envoyé → pris/refusé` + notes |
+| **Alertes** | Config + historique | Canaux (push/in-app/email), seuil de score, cadence |
+| **Dossier** | Support | Pièces (Storage) + champs libres + lien DossierFacile, prêt à copier |
+
+## Features différenciantes (au-delà de la découverte brute)
+
+- **Zone d'or (isochrones croisées)** — la carte montre l'intersection des zones atteignables
+  depuis 42 **et** l'UPEC → « où chercher pour nous deux ». Différenciateur fort vs les portails.
+- **État perso par annonce** — shortlist / masquer / statut pipeline / note (`user_listing_states`).
+  Sans « masquer », on revoit sans fin les mêmes annonces : indispensable, oublié des 2 plans.
+- **Message de contact pré-rempli** — template « bonjour, dossier ici [lien], dispo pour visiter »
+  en un clic. Dans une course, gagner 2 min/annonce = décisif.
+- **Badge dédup** — « aussi sur PAP + Bien'ici » sur l'annonce canonique (rassure sur la couverture).
+- **Breakdown de score transparent** — chaque annonce explique son score (les 4 composantes),
+  pour instaurer la confiance et permettre d'ajuster ses pondérations.
+
+## Alertes — empilement (pas de Telegram)
+
+1. **In-app Realtime** (Supabase) — l'annonce surgit dans le feed quand l'app est ouverte.
+2. **Web Push** (PWA + clés VAPID + service worker) — notif navigateur quand l'app est fermée.
+   Gratuit ; c'est le canal « vitesse » quand tu n'es pas devant l'écran.
+3. **Email (Resend)** — secours / digest, plus lent.
+
+Anti-doublon via `alert_deliveries (match_id, channel)` **et** dédup par `group_id` (jamais 2 fois
+le même appart physique, même posté sur 2 sites).
+
+---
+
 ## Stack retenue (et pourquoi elle tient en gratuit)
 
 - **Front + API** : **Next.js (App Router, TypeScript)** sur **Vercel** (free tier). Dashboard + SSR + API routes.
@@ -608,13 +741,16 @@ Chaque tranche = fonctionnelle de bout en bout, testée dans l'app réelle, puis
 - **Phase 1 — Pipeline bout-en-bout, source PAP.** Collecteur Playwright PAP, normalisation +
   dédup (`content_hash` + `dedup_key`), cron GitHub Actions (dépôt public) + keepalive, annonces
   brutes affichées. *Livrable : des annonces réelles arrivent seules dans la liste.*
-- **Phase 2 — Critères + scoring.** Formulaire `search_profile`, calcul **trajet PRIM** (+ cache),
-  `market_stats`, formule de score, liste **triée** + filtres. *Livrable : je vois MES annonces classées.*
-- **Phase 3 — Alertes.** Realtime in-app + email Resend, anti-doublon par `alert_deliveries` et
-  `group_id`. *Livrable : prévenu dans la minute d'un appart qui matche, une seule fois.*
-- **Phase 4 — Dossier.** Upload pièces + champs extra + lien DossierFacile, prêt à copier/envoyer.
-- **Phase 5 — Robustesse & sources.** Ajout **Leboncoin (API mobile)** puis **SeLoger**, monitoring
-  des collecteurs qui cassent, dédup inter-sources fine (`listing_groups`).
+- **Phase 2 — Critères + scoring + feed.** Onboarding `search_profile` avec **N destinations**
+  (42 + UPEC), calcul **trajet PRIM multi-cibles** (+ cache), `market_stats`, formule de score,
+  **feed inbox au clavier** trié + filtres + shortlist/masquer (`user_listing_states`).
+  *Livrable : je vois MES annonces classées et je trie au clavier.*
+- **Phase 3 — Alertes.** Realtime in-app + **Web Push (PWA/VAPID)** + email Resend, anti-doublon par
+  `alert_deliveries` et `group_id`. *Livrable : prévenu dans la minute d'un appart qui matche, une seule fois.*
+- **Phase 4 — Pipeline + dossier.** Kanban de suivi de chasse (statuts + notes) ; upload pièces +
+  champs extra + lien DossierFacile + message de contact pré-rempli.
+- **Phase 5 — Robustesse & sources.** Ajout **Bien'ici (API JSON)**, puis **Leboncoin (API mobile)**,
+  puis **SeLoger** ; monitoring des collecteurs qui cassent, dédup inter-sources fine (`listing_groups`).
 - **Phase 6 — Commercialisation.** Bascule collecteur → **API Melo**, **Stripe**, onboarding
   multi-user, landing, **revue CGU/RGPD par un juriste**.
 
