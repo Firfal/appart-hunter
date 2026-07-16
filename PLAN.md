@@ -6,6 +6,21 @@
 > une Phase 0 implémentable directement. Chaque recommandation s'appuie sur une recherche
 > factuelle 2025-2026 (sources citées en fin de section).
 
+## ⚠️ Mise à jour stack (Phase 0 — juillet 2026)
+
+Décision prise au démarrage, **révise la stack ci-dessous** :
+- **Backend = Firebase** (Firestore + Auth + Storage), **pas Supabase** — choix de familiarité,
+  budget ~5-10 €/mois accepté. Conséquences assumées : la **géo passe en code** (geohash + turf.js
+  + Cloud Functions au lieu de PostGIS), et le **schéma SQL §4 devient des collections Firestore +
+  security rules** (voir `firestore.rules`). Le §4 reste la référence du **modèle de domaine**.
+- **Front = Next.js sur Vercel** (inchangé).
+- **Collecte = Cloud Run Jobs + Cloud Scheduler, cron toutes les 5 min mais coupé la nuit**
+  (`*/5 9-19 * * *`, Europe/Paris) — rien ne se poste la nuit → ~10 h/j, repasse ~sous le free tier.
+  Jobs courts (≤30 s) pour rester bas. Priorité explicite : **être le premier sur chaque offre**.
+- **Idée future à garder** : quand un onglet de l'app est ouvert, faire du **scraping côté client**
+  (vrai navigateur = IP résidentielle + fingerprint réels → contourne mieux DataDome, décharge le
+  serveur). Complément au scraping serveur, pas remplacement.
+
 ## Contexte
 
 L'utilisateur cherche un appartement en location à **Paris / Île-de-France**, un marché

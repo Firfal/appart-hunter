@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// Multi-tenant : le pool d'annonces est lisible par tout utilisateur connecté et
+// écrit UNIQUEMENT par l'Admin SDK (collecteurs/scoring, qui bypassent ces rules).
+// Les données dérivées de l'utilisateur vivent en sous-collections de profiles/{uid}.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+
+    // ---- Pool partagé (lecture connectée, écriture Admin SDK seulement) ----
+    match /listings/{id}     { allow read: if isSignedIn(); allow write: if false; }
+    match /sources/{id}      { allow read: if isSignedIn(); allow write: if false; }
+    match /market_stats/{id} { allow read: if isSignedIn(); allow write: if false; }
+
+    // ---- Données propres à l'utilisateur ----
+    match /profiles/{uid} {
+      allow read, write: if isOwner(uid);
+
+      match /search_profiles/{id}    { allow read, write: if isOwner(uid); }
+      match /listing_states/{id}     { allow read, write: if isOwner(uid); }
+      match /alert_prefs/{id}        { allow read, write: if isOwner(uid); }
+      match /push_subscriptions/{id} { allow read, write: if isOwner(uid); }
+      // matches : calculés côté serveur (scoring) → lecture seule pour l'utilisateur.
+      match /matches/{id}            { allow read: if isOwner(uid); allow write: if false; }
+    }
+  }
+}
