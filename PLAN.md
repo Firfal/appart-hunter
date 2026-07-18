@@ -13,7 +13,9 @@ Décision prise au démarrage, **révise la stack ci-dessous** :
   budget ~5-10 €/mois accepté. Conséquences assumées : la **géo passe en code** (geohash + turf.js
   + Cloud Functions au lieu de PostGIS), et le **schéma SQL §4 devient des collections Firestore +
   security rules** (voir `firestore.rules`). Le §4 reste la référence du **modèle de domaine**.
-- **Front = Next.js sur Vercel** (inchangé).
+- **Front = Next.js sur Firebase App Hosting** (pas Vercel) — tout dans un seul écosystème
+  Google, une seule facturation, pas de double maintenance. Nécessite le plan **Blaze**.
+  Déploiement continu depuis le repo GitHub (privé), config via `apphosting.yaml`.
 - **Collecte = Cloud Run Jobs + Cloud Scheduler, cron toutes les 5 min mais coupé la nuit**
   (`*/5 9-19 * * *`, Europe/Paris) — rien ne se poste la nuit → ~10 h/j, repasse ~sous le free tier.
   Jobs courts (≤30 s) pour rester bas. Priorité explicite : **être le premier sur chaque offre**.

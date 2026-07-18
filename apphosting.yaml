@@ -1,0 +1,31 @@
+# Config Firebase App Hosting (Next.js).
+# https://firebase.google.com/docs/app-hosting/configure
+
+runConfig:
+  minInstances: 0        # scale-to-zero → ~0 € quand personne n'utilise l'app
+  maxInstances: 2        # plafond pour éviter toute facture surprise
+  cpu: 1
+  memoryMiB: 512
+
+# Variables d'env. Les NEXT_PUBLIC_* sont PUBLIQUES par design (embarquées dans le
+# bundle navigateur) → OK en clair ici. Les secrets (clé Admin) passeront par
+# Cloud Secret Manager en Phase 1, pas en clair.
+env:
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: AIzaSyB3HLQNcD38YOzjYH4PwxYv92InILSVw7s
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: appart-hunter-2d81b.firebaseapp.com
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: appart-hunter-2d81b
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: appart-hunter-2d81b.firebasestorage.app
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "867025565472"
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: "1:867025565472:web:de1d5cfa7b31a148df0945"
+    availability: [BUILD, RUNTIME]
