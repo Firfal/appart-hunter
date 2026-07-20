@@ -64,7 +64,7 @@ Résumé exécutif — le détail et les justifications suivent dans les section
 
 | # | Point ouvert | **Décision tranchée** | Pourquoi en une ligne |
 |---|---|---|---|
-| 1 | 1re source à scraper | **PAP.fr** → **Bien'ici** → Leboncoin (API mobile) → SeLoger | PAP sans DataDome ; Bien'ici a une **API JSON** stable ; Leboncoin/SeLoger = DataDome, en dernier |
+| 1 | 1re source à scraper | **Bien'ici** → PAP → Leboncoin (API mobile) → SeLoger | ⚠️ Recon live P1 : **PAP a ajouté Cloudflare** ; **Bien'ici = API JSON propre (1557 annonces Paris, 0 anti-bot)** → promu #1 |
 | 2 | API temps de trajet | **PRIM / Île-de-France Mobilités** (moteur Navitia) | Gratuit, **20 000 req/jour**, données IDFM natives, `apikey` en header |
 | 3 | Collecte gratuite | **Cloud Run Jobs + Cloud Scheduler** (cron fiable ~15 min) ; GitHub Actions pour proto/fallback | La **vitesse** est le produit → cron ponctuel requis ; free tier permanent GCP |
 | 4 | Modèle de données | Schéma ci-dessous, dédup **2 niveaux** (`content_hash` intra + `dedup_key`/`listing_groups` inter-sources) | RLS multi-tenant : pool `listings` partagé, dérivés user isolés |
@@ -74,7 +74,18 @@ Résumé exécutif — le détail et les justifications suivent dans les section
 
 # 1. SOURCES — quelle première source scraper ?
 
-## ✅ Décision : **démarrer par PAP.fr**, puis **Bien'ici**, puis Leboncoin (API mobile), puis SeLoger.
+## ⚠️ MISE À JOUR (recon live, Phase 1) : **démarrer par Bien'ici**, puis PAP, puis Leboncoin, puis SeLoger.
+
+**Ce que le recon live de juillet 2026 a révélé (vérifié, pas supposé) :**
+- **PAP a ajouté Cloudflare** depuis la recherche initiale : `curl` → `403 cf-mitigated: challenge`.
+  Un **Playwright** (vrai navigateur) **passe** le challenge (28 annonces/page 1), donc PAP reste
+  faisable mais **avec navigateur** (plus lourd/fragile) → rétrogradé #2.
+- **Bien'ici** : API JSON `GET https://www.bienici.com/realEstateAds.json?filters=…` → **HTTP 200,
+  1557 annonces de location Paris**, aucun anti-bot, champs riches (prix, surface, pièces, DPE,
+  meublé, étage, ascenseur, photos, charges, pro/particulier, description). **zoneId Paris = `-71525`**.
+  → **promu source #1** : trivial (fetch + parse JSON), **pas de Playwright ni de container** pour démarrer.
+
+Historique (raisonnement initial, avant recon) : **démarrer par PAP.fr**, puis Bien'ici, etc.
 
 **Pourquoi PAP en premier.** C'est **la seule des trois sans DataDome**. Portail 100 %
 particuliers, protections légères (rate-limit IP, éventuel reCAPTCHA en volume), scrapable
