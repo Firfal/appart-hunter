@@ -23,13 +23,16 @@ async function main() {
       `pièces ${has("rooms")}, DPE ${has("dpe")}, geo ${has("lat")}, CP ${has("postalCode")}`
   );
 
-  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+  const hasCreds =
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY);
+  if (hasCreds) {
     const { storeListings } = await import("./store");
     const res = await storeListings(listings);
     console.log(`\n✔ Firestore : ${res.created} créées, ${res.updated} mises à jour.`);
   } else {
     console.log(
-      "\nℹ Firestore non écrit (creds Admin absentes). Renseigne FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY dans .env.local pour activer l'écriture."
+      "\nℹ Firestore non écrit (creds Admin absentes). Renseigne GOOGLE_APPLICATION_CREDENTIALS ou FIREBASE_CLIENT_EMAIL/PRIVATE_KEY dans .env.local."
     );
   }
 }

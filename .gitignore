@@ -34,6 +34,10 @@ yarn-error.log*
 .env*
 !.env.example
 
+# clé de service Firebase Admin (SECRET — jamais committer)
+service-account.json
+*firebase-adminsdk*.json
+
 # vercel
 .vercel
 
