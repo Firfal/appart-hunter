@@ -870,8 +870,9 @@ le même appart physique, même posté sur 2 sites).
 
 Chaque tranche = fonctionnelle de bout en bout, testée dans l'app réelle, puis commit.
 
-- **Phase 0 — Fondations.** (détail ci-dessous) Scaffolding Next.js + Supabase + auth + déploiement
-  Vercel + migration `0001_init.sql`. *Livrable : je me connecte sur l'URL prod, une ligne `profiles` apparaît.*
+- **Phase 0 — Fondations. ✅ FAIT.** Scaffolding Next.js + Firebase (Auth + Firestore) + rules
+  multi-tenant déployées + déploiement **Firebase App Hosting** (auto-deploy sur `main`).
+  *Livrable atteint : connexion sur l'URL prod, doc `profiles/{uid}` créé.*
 - **Phase 1 — Pipeline bout-en-bout, source PAP.** Collecteur Playwright PAP, normalisation +
   dédup (`content_hash` + `dedup_key`), déploiement en **Cloud Run Job + Cloud Scheduler** (~15 min)
   — proto possible d'abord en GitHub Actions —, annonces brutes affichées.
