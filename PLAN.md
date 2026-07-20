@@ -884,10 +884,11 @@ Chaque tranche = fonctionnelle de bout en bout, testée dans l'app réelle, puis
 - **Phase 0 — Fondations. ✅ FAIT.** Scaffolding Next.js + Firebase (Auth + Firestore) + rules
   multi-tenant déployées + déploiement **Firebase App Hosting** (auto-deploy sur `main`).
   *Livrable atteint : connexion sur l'URL prod, doc `profiles/{uid}` créé.*
-- **Phase 1 — Pipeline bout-en-bout, source PAP.** Collecteur Playwright PAP, normalisation +
-  dédup (`content_hash` + `dedup_key`), déploiement en **Cloud Run Job + Cloud Scheduler** (~15 min)
-  — proto possible d'abord en GitHub Actions —, annonces brutes affichées.
-  *Livrable : des annonces réelles arrivent seules dans la liste.*
+- **Phase 1 — Pipeline bout-en-bout, source Bien'ici. ✅ FAIT.** Collecteur Bien'ici (API JSON, pas
+  de navigateur), normalisation + dédup (`contentHash` + `dedupKey`, docId = `source_externalId`),
+  **Firebase Scheduled Function** `*/5 9-19 * * *` (Europe/Paris) → Firestore `listings` (geo en
+  GeoPoint), feed `/listings` affiche. Vérifié : écriture cloud OK, idempotence OK.
+  *(Cloud Run + Playwright réservé à PAP, source #2.)* *Livrable atteint : des annonces réelles arrivent seules.*
 - **Phase 2 — Critères + scoring + feed.** Onboarding `search_profile` avec **N destinations**
   (42 + UPEC), calcul **trajet PRIM multi-cibles** (+ cache), `market_stats`, formule de score,
   **feed inbox au clavier** trié + filtres + shortlist/masquer (`user_listing_states`).
