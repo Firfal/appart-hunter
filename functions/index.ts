@@ -10,6 +10,7 @@ setGlobalOptions({ region: "europe-west1", memory: "256MiB", maxInstances: 2 });
 
 const PRIM_API_KEY = defineSecret("PRIM_API_KEY");
 const VAPID_PRIVATE_KEY = defineSecret("VAPID_PRIVATE_KEY");
+const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 
 // 1) Collecte Bien'ici toutes les 5 min, 9h→19h. ADC auto en runtime.
 export const collectBienici = onSchedule(
@@ -28,7 +29,7 @@ export const scoreProfiles = onSchedule(
     timeZone: "Europe/Paris",
     timeoutSeconds: 300,
     memory: "512MiB",
-    secrets: [PRIM_API_KEY, VAPID_PRIVATE_KEY],
+    secrets: [PRIM_API_KEY, VAPID_PRIVATE_KEY, RESEND_API_KEY],
   },
   async () => {
     const res = await scoreAllProfiles(Date.now());
