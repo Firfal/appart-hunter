@@ -18,12 +18,14 @@ service cloud.firestore {
     match /profiles/{uid} {
       allow read, write: if isOwner(uid);
 
-      match /search_profiles/{id}    { allow read, write: if isOwner(uid); }
       match /listing_states/{id}     { allow read, write: if isOwner(uid); }
       match /alert_prefs/{id}        { allow read, write: if isOwner(uid); }
       match /push_subscriptions/{id} { allow read, write: if isOwner(uid); }
-      // matches : calculés côté serveur (scoring) → lecture seule pour l'utilisateur.
-      match /matches/{id}            { allow read: if isOwner(uid); allow write: if false; }
+      // search_profiles + leurs matches (matches calculés côté serveur → lecture seule).
+      match /search_profiles/{spId} {
+        allow read, write: if isOwner(uid);
+        match /matches/{id} { allow read: if isOwner(uid); allow write: if false; }
+      }
     }
   }
 }
