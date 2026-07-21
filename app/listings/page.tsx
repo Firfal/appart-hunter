@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { collection, getDocs, limit, orderBy, query } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/firebase/auth-context";
@@ -71,12 +72,20 @@ export default function ListingsPage() {
             {matches ? `${matches.length} matchent (42 + UPEC ≤ 50 min)` : "…"} · {user.email}
           </p>
         </div>
-        <button
-          onClick={() => signOut()}
-          className="text-sm rounded-md border border-black/15 dark:border-white/20 px-3 py-1.5 hover:bg-black/5 dark:hover:bg-white/10"
-        >
-          Se déconnecter
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/criteres"
+            className="text-sm rounded-md border border-black/15 dark:border-white/20 px-3 py-1.5 hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            Mes critères
+          </Link>
+          <button
+            onClick={() => signOut()}
+            className="text-sm rounded-md border border-black/15 dark:border-white/20 px-3 py-1.5 hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            Se déconnecter
+          </button>
+        </div>
       </header>
 
       {matches === null ? (
