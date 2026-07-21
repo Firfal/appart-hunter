@@ -6,6 +6,7 @@ import Link from "next/link";
 import { collection, doc, limit, onSnapshot, orderBy, query, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/firebase/auth-context";
+import { enablePush } from "@/lib/push-client";
 
 type Match = {
   id: string;
@@ -41,6 +42,7 @@ export default function ListingsPage() {
   const [states, setStates] = useState<Record<string, State>>({});
   const [tab, setTab] = useState<Tab>("feed");
   const [sel, setSel] = useState(0);
+  const [pushMsg, setPushMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -126,6 +128,13 @@ export default function ListingsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => enablePush(user.uid).then(setPushMsg).catch((e) => setPushMsg(String(e?.message ?? e)))}
+            title={pushMsg ?? "Recevoir une notification quand un nouvel appart matche"}
+            className="text-sm rounded-md border border-black/15 dark:border-white/20 px-3 py-1.5 hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            {pushMsg === "🔔 Alertes activées" ? "🔔 Activées" : "🔔 Alertes"}
+          </button>
           <Link href="/criteres" className="text-sm rounded-md border border-black/15 dark:border-white/20 px-3 py-1.5 hover:bg-black/5 dark:hover:bg-white/10">
             Mes critères
           </Link>

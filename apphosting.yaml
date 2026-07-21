@@ -29,3 +29,6 @@ env:
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
     value: "1:867025565472:web:de1d5cfa7b31a148df0945"
     availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_VAPID_PUBLIC_KEY
+    value: BB3wMKzOcI64AMY6ruvXu-0sx79MRwO8yrNEeNT4jP5CZH9i-leU-_OeWuX_brE9ofIB_okEwXBUDVu0tqpLkbU
+    availability: [BUILD, RUNTIME]
