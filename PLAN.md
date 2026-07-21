@@ -889,10 +889,12 @@ Chaque tranche = fonctionnelle de bout en bout, testée dans l'app réelle, puis
   **Firebase Scheduled Function** `*/5 9-19 * * *` (Europe/Paris) → Firestore `listings` (geo en
   GeoPoint), feed `/listings` affiche. Vérifié : écriture cloud OK, idempotence OK.
   *(Cloud Run + Playwright réservé à PAP, source #2.)* *Livrable atteint : des annonces réelles arrivent seules.*
-- **Phase 2 — Critères + scoring + feed.** Onboarding `search_profile` avec **N destinations**
-  (42 + UPEC), calcul **trajet PRIM multi-cibles** (+ cache), `market_stats`, formule de score,
-  **feed inbox au clavier** trié + filtres + shortlist/masquer (`user_listing_states`).
-  *Livrable : je vois MES annonces classées et je trie au clavier.*
+- **Phase 2 — Critères + scoring + feed. 🚧 EN COURS.** ✅ Moteur de scoring (`lib/scoring.ts`),
+  ✅ trajet **PRIM multi-cibles** + cache (`lib/commute.ts`, collection `commute_times`),
+  ✅ `matches` calculés (profil 42+UPEC seedé, filtre dur 50min), ✅ feed classé par score
+  (trajets + écart marché). **Reste** : automatiser le scoring (Cloud Function + secret PRIM),
+  onboarding UI (au lieu du seed), `market_stats` propre, shortlist/masquer au clavier.
+  *Vérifié : 2/40 annonces passent (zone d'or 12e/13e).*
 - **Phase 3 — Alertes.** Realtime in-app + **Web Push (PWA/VAPID)** + email Resend, anti-doublon par
   `alert_deliveries` et `group_id`. *Livrable : prévenu dans la minute d'un appart qui matche, une seule fois.*
 - **Phase 4 — Pipeline + contact.** Kanban de suivi de chasse (statuts + notes) ; **contact rapide**
