@@ -895,8 +895,11 @@ Chaque tranche = fonctionnelle de bout en bout, testée dans l'app réelle, puis
   (trajets + écart marché). **Reste** : automatiser le scoring (Cloud Function + secret PRIM),
   onboarding UI (au lieu du seed), `market_stats` propre, shortlist/masquer au clavier.
   *Vérifié : 2/40 annonces passent (zone d'or 12e/13e).*
-- **Phase 3 — Alertes.** Realtime in-app + **Web Push (PWA/VAPID)** + email Resend, anti-doublon par
-  `alert_deliveries` et `group_id`. *Livrable : prévenu dans la minute d'un appart qui matche, une seule fois.*
+- **Phase 3 — Alertes. 🚧 EN GRANDE PARTIE FAITE.** ✅ Realtime in-app (feed `onSnapshot`, vérifié),
+  ✅ **Web Push (VAPID)** : SW `public/sw.js`, abonnement client (`push-client.ts`), envoi par la
+  function `scoreProfiles` (`lib/notify.ts`, anti-doublon `alert_deliveries`, secret VAPID) — déployé,
+  chemin d'envoi vérifié (0 push car pas encore d'abonnement). **Reste** : accorder la permission de
+  notif (1 clic sur « 🔔 Alertes ») pour un test de livraison réel ; **email Resend** (clé requise).
 - **Phase 4 — Pipeline + contact.** Kanban de suivi de chasse (statuts + notes) ; **contact rapide**
   (appel / mail Gmail pré-rempli / lien source) branché sur **ton template** + lien DossierFacile,
   bascule auto en « contacté ». *(Pas de module dossier : le lien DossierFacile suffit.)*
