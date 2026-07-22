@@ -900,9 +900,11 @@ Chaque tranche = fonctionnelle de bout en bout, testée dans l'app réelle, puis
   abonnement client, envoi par `scoreProfiles`, anti-doublon `alert_deliveries`, secrets VAPID+Resend.
   *Reste optionnel : 1 clic « 🔔 Alertes » pour activer la livraison push (l'email marche déjà) ;
   domaine vérifié Resend pour envoyer à d'autres adresses que le compte (mode test = compte only).*
-- **Phase 4 — Pipeline + contact.** Kanban de suivi de chasse (statuts + notes) ; **contact rapide**
-  (appel / mail Gmail pré-rempli / lien source) branché sur **ton template** + lien DossierFacile,
-  bascule auto en « contacté ». *(Pas de module dossier : le lien DossierFacile suffit.)*
+- **Phase 4 — Pipeline + contact. 🚧 EN GRANDE PARTIE FAITE via la fiche.** ✅ statut pipeline par
+  annonce (nouveau→à contacter→contacté→visite→dossier→pris/refusé) dans la fiche détaillée,
+  ✅ « Contacter » ouvre l'annonce source + bascule auto en « contacté ». **Reste** : vue kanban,
+  notes, ton template de message + injection lien DossierFacile (Bien'ici n'expose pas le contact →
+  le contact passe par le lien source). *(Pas de module dossier : le lien DossierFacile suffit.)*
 - **Phase 5 — Robustesse & sources.** Ajout **Bien'ici (API JSON)**, puis **Leboncoin (API mobile)**,
   puis **SeLoger** ; monitoring des collecteurs qui cassent, dédup inter-sources fine (`listing_groups`).
 - **Phase 6 — Commercialisation.** Bascule collecteur → **API Melo**, **Stripe**, onboarding
