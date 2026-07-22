@@ -7,6 +7,7 @@ import { collection, doc, limit, onSnapshot, orderBy, query, setDoc } from "fire
 import { db } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { enablePush } from "@/lib/push-client";
+import FichePanel from "./FichePanel";
 
 type Match = {
   id: string;
@@ -23,10 +24,12 @@ type Match = {
   thumbUrl: string | null;
   isPro: boolean | null;
   priceGapPct: number | null;
+  pricePerM2: number | null;
   commute: Record<string, number | null>;
+  breakdown?: { trajet: number; prix: number; fraicheur: number; base: number; mArnaque: number };
 };
 
-type State = { starred?: boolean; hidden?: boolean };
+type State = { starred?: boolean; hidden?: boolean; status?: string };
 type Tab = "feed" | "shortlist" | "hidden";
 
 function scoreColor(s: number) {
@@ -42,6 +45,7 @@ export default function ListingsPage() {
   const [states, setStates] = useState<Record<string, State>>({});
   const [tab, setTab] = useState<Tab>("feed");
   const [sel, setSel] = useState(0);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -98,7 +102,7 @@ export default function ListingsPage() {
       else if (e.key === "k" || e.key === "ArrowUp") { setSel((s) => Math.max(0, s - 1)); e.preventDefault(); }
       else if (e.key === "s" && cur) toggleStar(cur.id);
       else if (e.key === "x" && cur) toggleHide(cur.id);
-      else if (e.key === "Enter" && cur?.url) window.open(cur.url, "_blank");
+      else if (e.key === "Enter" && cur) setOpenId(cur.id);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -166,8 +170,8 @@ export default function ListingsPage() {
             return (
               <li key={m.id}>
                 <div
-                  onClick={() => setSel(i)}
-                  className={`flex gap-3 p-3 rounded-lg border ${i === sel ? "border-blue-500 ring-1 ring-blue-500/40" : "border-black/10 dark:border-white/10"}`}
+                  onClick={() => { setSel(i); setOpenId(m.id); }}
+                  className={`flex gap-3 p-3 rounded-lg border cursor-pointer ${i === sel ? "border-blue-500 ring-1 ring-blue-500/40" : "border-black/10 dark:border-white/10"}`}
                 >
                   <span className={`${scoreColor(m.score)} text-white text-sm font-semibold rounded-md w-10 h-10 flex items-center justify-center shrink-0`}>
                     {Math.round(m.score)}
@@ -202,6 +206,18 @@ export default function ListingsPage() {
           })}
         </ul>
       )}
+
+      {openId && matches && (() => {
+        const om = matches.find((x) => x.id === openId);
+        return om ? (
+          <FichePanel
+            match={om}
+            state={states[om.id] ?? {}}
+            onClose={() => setOpenId(null)}
+            onSetState={(patch) => setState(om.id, patch)}
+          />
+        ) : null;
+      })()}
     </main>
   );
 }
