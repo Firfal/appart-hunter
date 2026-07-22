@@ -102,6 +102,8 @@ export async function scoreAllProfiles(nowMs: number, listingLimit = 300) {
         arrondissement: arr,
         thumbUrl: (l.thumbUrl as string) ?? null,
         isPro: (l.isPro as boolean) ?? null,
+        lat: geo?.latitude ?? null,
+        lng: geo?.longitude ?? null,
         computedAt: FieldValue.serverTimestamp(),
       });
       if (res.passesHard) totalMatches++;

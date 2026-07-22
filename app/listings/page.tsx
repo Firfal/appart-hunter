@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { collection, doc, limit, onSnapshot, orderBy, query, setDoc } from "firebase/firestore";
+import { collection, doc, getDoc, limit, onSnapshot, orderBy, query, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { enablePush } from "@/lib/push-client";
 import FichePanel from "./FichePanel";
+import MapView, { type MapTarget } from "./MapView";
 
 type Match = {
   id: string;
@@ -25,6 +26,8 @@ type Match = {
   isPro: boolean | null;
   priceGapPct: number | null;
   pricePerM2: number | null;
+  lat: number | null;
+  lng: number | null;
   commute: Record<string, number | null>;
   breakdown?: { trajet: number; prix: number; fraicheur: number; base: number; mArnaque: number };
 };
@@ -47,6 +50,8 @@ export default function ListingsPage() {
   const [sel, setSel] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
+  const [view, setView] = useState<"list" | "map">("list");
+  const [targets, setTargets] = useState<MapTarget[]>([]);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -75,6 +80,15 @@ export default function ListingsPage() {
       setStates(m);
     });
     return () => unsub();
+  }, [user]);
+
+  // Cibles (pour la carte) depuis le profil.
+  useEffect(() => {
+    if (!user) return;
+    getDoc(doc(db, "profiles", user.uid, "search_profiles", "default")).then((snap) => {
+      const ts = (snap.data()?.targets ?? []) as { label: string; lat: number; lng: number }[];
+      setTargets(ts.filter((t) => t.lat != null && t.lng != null));
+    });
   }, [user]);
 
   const visible = useMemo(() => {
@@ -148,16 +162,28 @@ export default function ListingsPage() {
         </div>
       </header>
 
-      <nav className="mt-4 flex gap-1">
-        {tabs.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`text-sm rounded-md px-3 py-1.5 ${tab === t.key ? "bg-foreground text-background" : "hover:bg-black/5 dark:hover:bg-white/10"}`}>
-            {t.label}
-          </button>
-        ))}
+      <nav className="mt-4 flex items-center justify-between">
+        <div className="flex gap-1">
+          {tabs.map((t) => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`text-sm rounded-md px-3 py-1.5 ${tab === t.key ? "bg-foreground text-background" : "hover:bg-black/5 dark:hover:bg-white/10"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1">
+          {(["list", "map"] as const).map((v) => (
+            <button key={v} onClick={() => setView(v)}
+              className={`text-sm rounded-md px-3 py-1.5 ${view === v ? "bg-foreground text-background" : "hover:bg-black/5 dark:hover:bg-white/10"}`}>
+              {v === "list" ? "Liste" : "🗺 Carte"}
+            </button>
+          ))}
+        </div>
       </nav>
 
-      {matches === null ? (
+      {view === "map" ? (
+        <MapView matches={visible} targets={targets} onOpen={setOpenId} />
+      ) : matches === null ? (
         <p className="mt-8 text-sm opacity-60">Calcul du classement…</p>
       ) : visible.length === 0 ? (
         <p className="mt-8 text-sm opacity-60">
