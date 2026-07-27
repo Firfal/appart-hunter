@@ -216,7 +216,7 @@ export default function ListingsPage() {
                         {m.priceGapPct != null ? ` · ${m.priceGapPct > 0 ? "-" : "+"}${Math.abs(m.priceGapPct)}% marché` : ""}
                       </span>
                     </div>
-                    <div className="text-sm opacity-70">🚇 UPEC {m.commute?.UPEC ?? "?"} min · 42 {m.commute?.["42"] ?? "?"} min</div>
+                    <div className="text-sm opacity-70">🚇 {Object.entries(m.commute || {}).map(([k, v]) => `${k} ${v ?? "?"} min`).join(" · ") || "trajets…"}</div>
                     <div className="text-xs opacity-50 truncate">
                       {m.arrondissement ? `Paris ${m.arrondissement}e` : ""}{m.dpe && m.dpe !== "NS" ? ` · DPE ${m.dpe}` : ""}{m.isPro ? " · agence" : " · particulier"} · {m.source}
                     </div>
