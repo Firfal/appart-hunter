@@ -1,43 +1,35 @@
-// Point d'entrée du collecteur (appelé par le cron plus tard).
-// fetch + normalise + affiche, puis écrit dans Firestore SI les creds Admin sont présentes.
+// Runner LOCAL (Mac, IP résidentielle) : collecte toutes les sources + écrit Firestore.
+// Bien'ici tourne aussi dans le cloud ; Leboncoin (DataDome) ne marche QUE d'ici.
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
+import type { Collector } from "./types";
 import { bieniciCollector } from "./bienici";
+import { leboncoinCollector } from "./leboncoin";
+
+const COLLECTORS: Collector[] = [bieniciCollector, leboncoinCollector];
 
 async function main() {
-  const listings = await bieniciCollector.fetchListings({ maxPages: 2 });
+  const hasCreds = process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.FIREBASE_CLIENT_EMAIL;
+  const storeListings = hasCreds ? (await import("./store")).storeListings : null;
 
-  console.log(`\n${listings.length} annonces normalisées (Bien'ici / Paris)\n`);
-  for (const l of listings.slice(0, 6)) {
-    console.log(
-      `- [${l.arrondissement ?? "?"}] ${l.surface ?? "?"}m² · ${l.priceTotal ?? "?"}€CC · ${l.rooms ?? "?"}p` +
-        ` · ${l.furnished ? "meublé" : "vide"} · DPE ${l.dpe ?? "?"} · ${l.isPro ? "pro" : "particulier"}` +
-        ` · geo ${l.lat ?? "∅"},${l.lng ?? "∅"} · ${l.photos.length}📷`
-    );
+  for (const c of COLLECTORS) {
+    try {
+      const listings = await c.fetchListings({ maxPages: 3 });
+      const has = (k: keyof (typeof listings)[number]) => listings.filter((l) => l[k] != null).length;
+      console.log(
+        `\n[${c.key}] ${listings.length} annonces · prix ${has("priceTotal")} · surface ${has("surface")} · ` +
+          `pièces ${has("rooms")} · geo ${has("lat")} · CP ${has("postalCode")}`
+      );
+      if (storeListings) {
+        const r = await storeListings(listings);
+        console.log(`[${c.key}] Firestore : ${r.created} créées, ${r.updated} maj`);
+      }
+    } catch (e) {
+      console.error(`[${c.key}] ERREUR :`, (e as Error).message);
+    }
   }
-
-  const has = (k: keyof (typeof listings)[number]) => listings.filter((l) => l[k] != null).length;
-  console.log(
-    `\nComplétude: prix ${has("priceTotal")}/${listings.length}, surface ${has("surface")}, ` +
-      `pièces ${has("rooms")}, DPE ${has("dpe")}, geo ${has("lat")}, CP ${has("postalCode")}`
-  );
-
-  const hasCreds =
-    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
-    (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY);
-  if (hasCreds) {
-    const { storeListings } = await import("./store");
-    const res = await storeListings(listings);
-    console.log(`\n✔ Firestore : ${res.created} créées, ${res.updated} mises à jour.`);
-  } else {
-    console.log(
-      "\nℹ Firestore non écrit (creds Admin absentes). Renseigne GOOGLE_APPLICATION_CREDENTIALS ou FIREBASE_CLIENT_EMAIL/PRIVATE_KEY dans .env.local."
-    );
-  }
+  if (!storeListings) console.log("\nℹ Pas de creds Admin → pas d'écriture Firestore.");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e); process.exit(1); });
