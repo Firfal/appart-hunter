@@ -19,6 +19,12 @@ Décision prise au démarrage, **révise la stack ci-dessous** :
 - **Collecte = Cloud Run Jobs + Cloud Scheduler, cron toutes les 5 min mais coupé la nuit**
   (`*/5 9-19 * * *`, Europe/Paris) — rien ne se poste la nuit → ~10 h/j, repasse ~sous le free tier.
   Jobs courts (≤30 s) pour rester bas. Priorité explicite : **être le premier sur chaque offre**.
+- **Collecte MULTI-SOURCE (29 juil. 2026)** : **Bien'ici** (cloud + local) + **Leboncoin** ajouté
+  (`collectors/leboncoin.ts` via **curl** car DataDome bloque l'empreinte TLS de Node ; IP
+  résidentielle requise → tourne en **local sur le Mac** via launchd `com.apparthunter.collect`,
+  toutes les 15 min 9h-19h). Apporte les **particuliers** + géo. **PAP abandonné** (~2 vraies
+  annonces/page + pas de géo). Repo déplacé hors du Desktop (`~/apparthunter`) car macOS TCC
+  bloquait launchd sur le Bureau.
 - **Idée future à garder** : quand un onglet de l'app est ouvert, faire du **scraping côté client**
   (vrai navigateur = IP résidentielle + fingerprint réels → contourne mieux DataDome, décharge le
   serveur). Complément au scraping serveur, pas remplacement.
