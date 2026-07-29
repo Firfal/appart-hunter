@@ -6,8 +6,9 @@ config({ path: ".env.local" });
 import type { Collector } from "./types";
 import { bieniciCollector } from "./bienici";
 import { leboncoinCollector } from "./leboncoin";
+import { selogerCollector } from "./seloger";
 
-const COLLECTORS: Collector[] = [bieniciCollector, leboncoinCollector];
+const COLLECTORS: Collector[] = [bieniciCollector, leboncoinCollector, selogerCollector];
 
 async function main() {
   const hasCreds = process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.FIREBASE_CLIENT_EMAIL;
