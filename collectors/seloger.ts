@@ -1,6 +1,24 @@
 import { chromium } from "playwright";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { Collector, NormalizedListing, parisArrondissement } from "./types";
 import { geocode } from "../lib/geocode";
+
+const exec = promisify(execFile);
+
+// Cache la fenêtre Chromium (équiv. Cmd+H). Nécessite la permission Accessibilité.
+// Les flags anti-throttling (au lancement) évitent qu'App Nap ralentisse le JS DataDome.
+async function hideChromium(): Promise<void> {
+  try {
+    await exec("osascript", [
+      "-e",
+      'tell application "System Events" to set visible of (every process whose name is "Chromium") to false',
+    ]);
+    console.log("[seloger] fenêtre masquée (osascript OK)");
+  } catch (e) {
+    console.log("[seloger] masquage refusé (Accessibilité manquante ?) :", (e as Error).message.slice(0, 80));
+  }
+}
 
 // SeLoger : DataDome le plus agressif → curl ET headless bloqués ; seul un navigateur
 // HEADFUL (fenêtre hors-écran) passe, par intermittence → retries. Local (Mac GUI) uniquement.
@@ -88,11 +106,19 @@ export const selogerCollector: Collector = {
   async fetchListings({ maxPages = 1 }: { maxPages?: number } = {}) {
     const browser = await chromium.launch({
       headless: false,
-      args: ["--disable-blink-features=AutomationControlled", "--window-position=10000,10000"],
+      args: [
+        "--disable-blink-features=AutomationControlled",
+        "--window-position=10000,10000",
+        // Empêche macOS/Chromium de throttler le JS quand la fenêtre est cachée/occultée.
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-background-timer-throttling",
+      ],
     });
     try {
       const ctx = await browser.newContext({ userAgent: UA, locale: "fr-FR", viewport: { width: 1400, height: 900 } });
       const page = await ctx.newPage();
+      await hideChromium(); // masque la fenêtre dès son apparition
       const raws: Raw[] = [];
       for (let pg = 1; pg <= maxPages; pg++) {
         const url = pg === 1 ? SEARCH : `${SEARCH}?LISTING-LISTpg=${pg}`;
