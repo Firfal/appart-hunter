@@ -43,6 +43,7 @@ export async function scoreAllProfiles(nowMs: number, listingLimit = 300) {
     const data = sp.data();
     const targets = (data.targets ?? []) as StoredTarget[];
     const criteria: SearchCriteria = {
+      budgetMin: data.budgetMin ?? null,
       budgetMax: data.budgetMax ?? null,
       surfaceMin: data.surfaceMin ?? null,
       roomsMin: data.roomsMin ?? null,

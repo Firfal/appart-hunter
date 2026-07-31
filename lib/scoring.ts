@@ -20,6 +20,7 @@ export type ScoringListing = {
 };
 
 export type SearchCriteria = {
+  budgetMin: number | null; // loyer CC min (null = pas de plancher)
   budgetMax: number | null;
   surfaceMin: number | null;
   roomsMin: number | null;
@@ -75,6 +76,7 @@ export function scoreListing(input: ScoreInput): ScoreResult {
   });
 
   // ---- Filtres durs ----
+  if (c.budgetMin != null && l.priceTotal != null && l.priceTotal < c.budgetMin) return fail("sous le budget min");
   if (c.budgetMax != null && l.priceTotal != null && l.priceTotal > c.budgetMax) return fail("hors budget");
   if (c.surfaceMin != null && l.surface != null && l.surface < c.surfaceMin) return fail("surface < min");
   if (c.roomsMin != null && l.rooms != null && l.rooms < c.roomsMin) return fail("pièces < min");

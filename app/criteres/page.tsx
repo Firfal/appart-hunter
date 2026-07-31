@@ -35,6 +35,7 @@ export default function CriteresPage() {
   const { user, loading } = useAuth();
 
   const [name, setName] = useState("Ma recherche");
+  const [budgetMin, setBudgetMin] = useState<number | "">("");
   const [budgetMax, setBudgetMax] = useState<number | "">("");
   const [surfaceMin, setSurfaceMin] = useState<number | "">("");
   const [roomsMin, setRoomsMin] = useState<number | "">("");
@@ -57,6 +58,7 @@ export default function CriteresPage() {
       if (snap.exists()) {
         const d = snap.data();
         setName(d.name ?? "Ma recherche");
+        setBudgetMin(d.budgetMin ?? "");
         setBudgetMax(d.budgetMax ?? "");
         setSurfaceMin(d.surfaceMin ?? "");
         setRoomsMin(d.roomsMin ?? "");
@@ -107,6 +109,7 @@ export default function CriteresPage() {
       doc(db, "profiles", user.uid, "search_profiles", "default"),
       {
         name,
+        budgetMin: budgetMin === "" ? null : Number(budgetMin),
         budgetMax: budgetMax === "" ? null : Number(budgetMax),
         surfaceMin: surfaceMin === "" ? null : Number(surfaceMin),
         roomsMin: roomsMin === "" ? null : Number(roomsMin),
@@ -146,7 +149,12 @@ export default function CriteresPage() {
           <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div>
+            <label className="text-sm opacity-70">Budget min (€ CC)</label>
+            <input type="number" className={inputCls} value={budgetMin} placeholder="—"
+              onChange={(e) => setBudgetMin(e.target.value === "" ? "" : Number(e.target.value))} />
+          </div>
           <div>
             <label className="text-sm opacity-70">Budget max (€ CC)</label>
             <input type="number" className={inputCls} value={budgetMax}
