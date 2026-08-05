@@ -47,7 +47,7 @@ function Bar({ label, value }: { label: string; value: number }) {
     <div className="flex items-center gap-2 text-xs">
       <span className="w-16 opacity-60">{label}</span>
       <div className="flex-1 h-2 rounded bg-black/10 dark:bg-white/10 overflow-hidden">
-        <div className="h-full bg-blue-500" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+        <div className="h-full bg-accent" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
       </div>
       <span className="w-8 text-right tabular-nums">{Math.round(value)}</span>
     </div>
@@ -94,7 +94,7 @@ export default function FichePanel({
     <div className="fixed inset-0 z-20 flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/40" />
       <div
-        className="relative w-full max-w-md h-full overflow-y-auto bg-white dark:bg-zinc-950 border-l border-black/10 dark:border-white/15 p-5"
+        className="relative w-full max-w-md h-full overflow-y-auto bg-surface border-l border-border p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between">
@@ -139,7 +139,7 @@ export default function FichePanel({
           </div>
         )}
 
-        <div className="mt-4 rounded-lg border border-black/10 dark:border-white/10 p-3 text-sm">
+        <div className="mt-4 rounded-lg border border-border p-3 text-sm">
           <div className="font-medium mb-1">🚇 Trajets (transit, heure de pointe)</div>
           {Object.entries(match.commute || {}).map(([k, v]) => (
             <div key={k} className="flex justify-between">
@@ -149,7 +149,7 @@ export default function FichePanel({
           ))}
         </div>
 
-        <div className="mt-3 rounded-lg border border-black/10 dark:border-white/10 p-3 text-sm">
+        <div className="mt-3 rounded-lg border border-border p-3 text-sm">
           <div className="flex justify-between">
             <span className="opacity-70">Prix / m²</span>
             <span>{match.pricePerM2 != null ? `${match.pricePerM2} €` : "?"}</span>
@@ -169,7 +169,7 @@ export default function FichePanel({
           <select
             value={state.status ?? "new"}
             onChange={(e) => onSetState({ status: e.target.value })}
-            className="w-full mt-1 rounded-md border border-black/15 dark:border-white/20 bg-transparent px-3 py-2 text-sm"
+            className="w-full mt-1 rounded-md border border-border bg-transparent px-3 py-2 text-sm"
           >
             {STATUSES.map((s) => (
               <option key={s.key} value={s.key} className="bg-white dark:bg-zinc-900">{s.label}</option>
@@ -179,17 +179,17 @@ export default function FichePanel({
 
         <div className="mt-4 grid grid-cols-2 gap-2">
           <button onClick={() => onSetState({ starred: !state.starred })}
-            className="rounded-md border border-black/15 dark:border-white/20 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10">
+            className="rounded-md border border-border px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10">
             {state.starred ? "★ En shortlist" : "☆ Shortlist"}
           </button>
           <button onClick={() => onSetState({ hidden: !state.hidden })}
-            className="rounded-md border border-black/15 dark:border-white/20 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10">
+            className="rounded-md border border-border px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10">
             {state.hidden ? "Démasquer" : "🚫 Masquer"}
           </button>
         </div>
 
         <button onClick={contact}
-          className="mt-2 w-full rounded-md bg-foreground text-background px-3 py-2 text-sm font-medium">
+          className="mt-2 w-full rounded-lg bg-accent text-white px-3 py-2.5 text-sm font-medium hover:opacity-90 transition-opacity">
           Contacter (ouvre l&apos;annonce) →
         </button>
       </div>

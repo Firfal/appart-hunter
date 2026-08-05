@@ -132,7 +132,7 @@ export default function CriteresPage() {
   }
 
   const inputCls =
-    "w-full rounded-md border border-black/15 dark:border-white/20 bg-transparent px-3 py-2 text-sm";
+    "w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm";
 
   return (
     <main className="flex-1 p-6 max-w-2xl mx-auto w-full">
@@ -178,7 +178,7 @@ export default function CriteresPage() {
             {(["any", "yes", "no"] as const).map((v) => (
               <button key={v} onClick={() => setFurnished(v)}
                 className={`text-sm rounded-md px-3 py-1.5 border ${
-                  furnished === v ? "bg-foreground text-background border-transparent" : "border-black/15 dark:border-white/20"
+                  furnished === v ? "bg-foreground text-background border-transparent" : "border-border"
                 }`}>
                 {v === "any" ? "Indifférent" : v === "yes" ? "Meublé" : "Vide"}
               </button>
@@ -191,7 +191,7 @@ export default function CriteresPage() {
         <div className="flex items-center justify-between">
           <h2 className="font-medium">Destinations (trajet transit)</h2>
           <button onClick={() => setTargets((t) => [...t, emptyTarget()])}
-            className="text-sm rounded-md border border-black/15 dark:border-white/20 px-3 py-1.5 hover:bg-black/5 dark:hover:bg-white/10">
+            className="text-sm rounded-md border border-border px-3 py-1.5 hover:bg-black/5 dark:hover:bg-white/10">
             + Ajouter
           </button>
         </div>
@@ -201,7 +201,7 @@ export default function CriteresPage() {
 
         <div className="mt-4 space-y-4">
           {targets.map((t, i) => (
-            <div key={i} className="rounded-lg border border-black/10 dark:border-white/10 p-3 space-y-3">
+            <div key={i} className="rounded-lg border border-border p-3 space-y-3">
               <div className="flex gap-2">
                 <input className={inputCls} placeholder="Nom (ex. École 42)" value={t.label}
                   onChange={(e) => updateTarget(i, { label: e.target.value })} />
@@ -216,7 +216,7 @@ export default function CriteresPage() {
                   value={t.query} onChange={(e) => onQueryChange(i, e.target.value)} />
                 {t.lat != null && <p className="text-xs text-emerald-600 mt-1">📍 localisé</p>}
                 {t.suggestions.length > 0 && (
-                  <ul className="absolute z-10 mt-1 w-full rounded-md border border-black/15 dark:border-white/20 bg-white dark:bg-zinc-900 shadow">
+                  <ul className="absolute z-10 mt-1 w-full rounded-md border border-border bg-white dark:bg-zinc-900 shadow">
                     {t.suggestions.map((s, k) => (
                       <li key={k}>
                         <button onClick={() => pickSuggestion(i, s)}
@@ -251,12 +251,12 @@ export default function CriteresPage() {
         </div>
       </section>
 
-      <div className="mt-8 flex items-center gap-4">
+      <div className="mt-8 flex items-center gap-4 sticky bottom-0 bg-background/80 backdrop-blur py-3">
         <button onClick={save}
-          className="rounded-md bg-foreground text-background px-5 py-2 text-sm font-medium">
+          className="rounded-lg bg-accent text-white px-5 py-2.5 text-sm font-medium hover:opacity-90 transition-opacity">
           Enregistrer
         </button>
-        {status && <span className="text-sm opacity-70">{status}</span>}
+        {status && <span className="text-sm text-muted">{status}</span>}
       </div>
     </main>
   );
