@@ -106,6 +106,7 @@ export async function scoreAllProfiles(nowMs: number, listingLimit = 300) {
         lat: geo?.latitude ?? null,
         lng: geo?.longitude ?? null,
         firstSeenAt: (l.firstSeenAt as unknown) ?? null,
+        dedupKey: (l.dedupKey as string) ?? null,
         computedAt: FieldValue.serverTimestamp(),
       });
       if (res.passesHard) totalMatches++;

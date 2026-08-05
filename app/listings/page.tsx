@@ -30,8 +30,10 @@ type Match = {
   lat: number | null;
   lng: number | null;
   firstSeenAt?: Ts;
+  dedupKey?: string | null;
   commute: Record<string, number | null>;
   breakdown?: { trajet: number; prix: number; fraicheur: number; base: number; mArnaque: number };
+  alsoOn?: string[]; // sources supplémentaires (dédup inter-sources)
 };
 
 type State = { starred?: boolean; hidden?: boolean; status?: string };
@@ -126,7 +128,23 @@ export default function ListingsPage() {
     if (tab === "shortlist") list = all.filter((m) => states[m.id]?.starred);
     else if (tab === "hidden") list = all.filter((m) => states[m.id]?.hidden);
     else list = all.filter((m) => m.passesHard && !states[m.id]?.hidden);
-    const sorted = [...list];
+
+    // Dédup inter-sources : même appart (dedupKey) vu sur plusieurs sites → 1 carte.
+    const byKey = new Map<string, Match[]>();
+    const deduped: Match[] = [];
+    for (const m of list) {
+      if (!m.dedupKey) { deduped.push(m); continue; }
+      const g = byKey.get(m.dedupKey);
+      if (g) g.push(m);
+      else byKey.set(m.dedupKey, [m]);
+    }
+    for (const g of byKey.values()) {
+      const best = [...g].sort((a, b) => b.score - a.score)[0];
+      const sources = [...new Set(g.map((x) => x.source).filter(Boolean))] as string[];
+      deduped.push(sources.length > 1 ? { ...best, alsoOn: sources } : best);
+    }
+
+    const sorted = deduped;
     if (sort === "score") sorted.sort((a, b) => b.score - a.score);
     else if (sort === "price") sorted.sort((a, b) => (a.priceTotal ?? 9e9) - (b.priceTotal ?? 9e9));
     else sorted.sort((a, b) => (ms(b.firstSeenAt) ?? 0) - (ms(a.firstSeenAt) ?? 0));
@@ -284,6 +302,11 @@ export default function ListingsPage() {
                         {m.arrondissement ? <span>Paris {m.arrondissement}e</span> : null}
                         {m.dpe && m.dpe !== "NS" ? <span>· DPE {m.dpe}</span> : null}
                         {src ? <span className={`px-1.5 py-0.5 rounded ${src.cls}`}>{src.label}</span> : <span>· {m.source}</span>}
+                        {m.alsoOn && m.alsoOn.length > 1 && (
+                          <span title="Même appart trouvé sur plusieurs sites">
+                            +{m.alsoOn.filter((s) => s !== m.source).map((s) => SOURCE_META[s]?.label ?? s).join(", ")}
+                          </span>
+                        )}
                         <span>· {m.isPro ? "agence" : "particulier"}</span>
                         {ms(m.firstSeenAt) ? <span>· {ago(ms(m.firstSeenAt))}</span> : null}
                       </div>
