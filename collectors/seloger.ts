@@ -1,32 +1,19 @@
-import { chromium } from "playwright";
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { chromium } from "playwright-extra";
+import stealth from "puppeteer-extra-plugin-stealth";
 import { Collector, NormalizedListing, parisArrondissement } from "./types";
 import { geocode } from "../lib/geocode";
 
-const exec = promisify(execFile);
+chromium.use(stealth());
 
-// Cache la fenêtre Chromium (équiv. Cmd+H). Nécessite la permission Accessibilité.
-// Les flags anti-throttling (au lancement) évitent qu'App Nap ralentisse le JS DataDome.
-async function hideChromium(): Promise<void> {
-  try {
-    await exec("osascript", [
-      "-e",
-      'tell application "System Events" to set visible of (every process whose name is "Chromium") to false',
-    ]);
-    console.log("[seloger] fenêtre masquée (osascript OK)");
-  } catch (e) {
-    console.log("[seloger] masquage refusé (Accessibilité manquante ?) :", (e as Error).message.slice(0, 80));
-  }
-}
-
-// SeLoger : DataDome le plus agressif → curl ET headless bloqués ; seul un navigateur
-// HEADFUL (fenêtre hors-écran) passe, par intermittence → retries. Local (Mac GUI) uniquement.
-// Pas de géo dans la liste → on géocode le quartier (approx). Source « best effort », fragile.
-const SEARCH = "https://www.seloger.com/immobilier/locations/immo-paris-75/bien-appartement/";
+// SeLoger : DataDome agressif. Solution : Playwright HEADLESS + plugin stealth (aucune fenêtre)
+// sur l'endpoint classified-search (respecte les filtres, dont priceMax) → annonces abordables.
+// Pas de géo dans la liste → géocodage du quartier (BAN, cache) + fallback centroïde arrondissement.
+const PARIS = "AD08FR31096"; // code localisation SeLoger pour Paris
+const PRICE_MAX = 2500; // plafond de collecte (le budget par user affine ensuite)
+const searchUrl = (pg: number) =>
+  `https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=${PARIS}&priceMax=${PRICE_MAX}&sort=d_dt_crea${pg > 1 ? `&LISTING-LISTpg=${pg}` : ""}`;
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
-// Centroïdes approximatifs des arrondissements (fallback si le géocodage du quartier échoue).
 const ARR_CENTROID: Record<number, [number, number]> = {
   1: [48.8626, 2.3363], 2: [48.8679, 2.3417], 3: [48.8637, 2.3615], 4: [48.8544, 2.3574],
   5: [48.8445, 2.3502], 6: [48.8496, 2.3339], 7: [48.8565, 2.3126], 8: [48.8726, 2.3122],
@@ -36,15 +23,9 @@ const ARR_CENTROID: Record<number, [number, number]> = {
 };
 
 type Raw = { href: string; text: string };
-
-function num(re: RegExp, s: string): number | null {
-  const m = s.match(re);
-  return m ? Number(m[1].replace(/\s/g, "").replace(",", ".")) : null;
-}
-
 const geoCache = new Map<string, { lat: number; lng: number } | null>();
 
-async function geoFor(neighborhood: string | null, zipcode: string | null, arr: number | null): Promise<{ lat: number | null; lng: number | null }> {
+async function geoFor(neighborhood: string | null, zipcode: string | null, arr: number | null) {
   const key = `${neighborhood ?? ""}|${zipcode ?? ""}`;
   if (neighborhood && !geoCache.has(key)) {
     try {
@@ -61,25 +42,33 @@ async function geoFor(neighborhood: string | null, zipcode: string | null, arr: 
   return { lat: null, lng: null };
 }
 
+function num(re: RegExp, s: string): number | null {
+  const m = s.match(re);
+  return m ? Number(m[1].replace(/\s/g, "").replace(",", ".")) : null;
+}
+
 async function normalize(r: Raw): Promise<NormalizedListing | null> {
   const t = r.text;
   const idm = r.href.match(/(\d{6,})/);
   if (!idm) return null;
   const priceM = t.match(/([\d\s]+)\s*€\s*\/mois/);
-  const price = priceM ? Number(priceM[1].replace(/\s/g, "")) : null;
+  let price = priceM ? Number(priceM[1].replace(/\s/g, "")) : null;
+  // Garde-fou : un loyer > 6000 €/mois = quasi toujours une erreur de parsing
+  // (prix de vente ou pub qui fuite dans le texte de la carte) → on écarte.
+  if (price != null && (price > 6000 || price < 150)) price = null;
+  if (price == null) return null;
   const dpeM = t.match(/([A-G])\d[\d\s]*€\s*\/mois/);
   const locM = t.match(/([\wÀ-ÿ'’.\- ]+?),\s*Paris\s+(\d+)(?:er|ème|e)?\s*arrondissement\s*\((\d{5})\)/);
   const neighborhood = locM ? locM[1].trim() : null;
   const zipcode = locM ? locM[3] : null;
   const arr = zipcode ? parisArrondissement(zipcode) : null;
   const g = await geoFor(neighborhood, zipcode, arr);
-
   return {
     source: "seloger",
     externalId: idm[1],
     url: r.href,
     title: neighborhood ? `Appartement ${neighborhood}` : "Appartement",
-    priceTotal: price, // "charges comprises"
+    priceTotal: price,
     rent: price,
     charges: null,
     surface: num(/([\d,]+)\s*m²/, t),
@@ -94,7 +83,7 @@ async function normalize(r: Raw): Promise<NormalizedListing | null> {
     lat: g.lat,
     lng: g.lng,
     photos: [],
-    isPro: true, // SeLoger = agences
+    isPro: true,
     description: null,
     postedAt: null,
     raw: undefined,
@@ -103,37 +92,25 @@ async function normalize(r: Raw): Promise<NormalizedListing | null> {
 
 export const selogerCollector: Collector = {
   key: "seloger",
-  async fetchListings({ maxPages = 1 }: { maxPages?: number } = {}) {
-    const browser = await chromium.launch({
-      headless: false,
-      args: [
-        "--disable-blink-features=AutomationControlled",
-        "--window-position=10000,10000",
-        // Empêche macOS/Chromium de throttler le JS quand la fenêtre est cachée/occultée.
-        "--disable-backgrounding-occluded-windows",
-        "--disable-renderer-backgrounding",
-        "--disable-background-timer-throttling",
-      ],
-    });
+  async fetchListings({ maxPages = 2 }: { maxPages?: number } = {}) {
+    const browser = await chromium.launch({ headless: true });
     try {
-      const ctx = await browser.newContext({ userAgent: UA, locale: "fr-FR", viewport: { width: 1400, height: 900 } });
-      const page = await ctx.newPage();
-      await hideChromium(); // masque la fenêtre dès son apparition
+      const page = await (await browser.newContext({ userAgent: UA, locale: "fr-FR", viewport: { width: 1400, height: 900 } })).newPage();
       const raws: Raw[] = [];
       for (let pg = 1; pg <= maxPages; pg++) {
-        const url = pg === 1 ? SEARCH : `${SEARCH}?LISTING-LISTpg=${pg}`;
         let ok = false;
         for (let i = 0; i < 4 && !ok; i++) {
           try {
-            const r = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 40000 });
-            await page.waitForTimeout(9000);
-            if (r?.status() === 200 && (await page.content()).length > 200000) ok = true;
-            else await page.waitForTimeout(4000);
+            const r = await page.goto(searchUrl(pg), { waitUntil: "domcontentloaded", timeout: 40000 });
+            await page.waitForTimeout(8000);
+            const html = await page.content();
+            if (r?.status() === 200 && html.length > 150000 && !/datadome|geo\.captcha/i.test(html)) ok = true;
+            else await page.waitForTimeout(3000);
           } catch {
             await page.waitForTimeout(3000);
           }
         }
-        if (!ok) break; // DataDome nous a bloqués ce coup-ci
+        if (!ok) break;
         const cards = await page.evaluate(() =>
           [...document.querySelectorAll("[data-testid='serp-core-classified-card-testid']")].map((el) => ({
             href: (el.querySelector("a[href*='.htm']") as HTMLAnchorElement | null)?.getAttribute("href")?.split("?")[0] || "",
