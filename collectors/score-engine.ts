@@ -12,10 +12,23 @@ function median(xs: number[]): number | null {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+/** Filtres « pas chers » (sans trajet) : élimine vite avant l'appel PRIM coûteux. */
+function cheapPass(l: Record<string, unknown>, c: SearchCriteria): boolean {
+  const p = l.priceTotal as number | null, s = l.surface as number | null;
+  const r = l.rooms as number | null, f = l.furnished as boolean | null, a = l.arrondissement as number | null;
+  if (c.budgetMin != null && p != null && p < c.budgetMin) return false;
+  if (c.budgetMax != null && p != null && p > c.budgetMax) return false;
+  if (c.surfaceMin != null && s != null && s < c.surfaceMin) return false;
+  if (c.roomsMin != null && r != null && r < c.roomsMin) return false;
+  if (c.furnished != null && f != null && f !== c.furnished) return false;
+  if (c.arrondissements?.length && a != null && !c.arrondissements.includes(a)) return false;
+  return true;
+}
+
 /** Score toutes les recherches actives (tous users) contre les annonces actives. */
-export async function scoreAllProfiles(nowMs: number, listingLimit = 300) {
-  // Annonces récentes (tri simple = pas d'index composite), filtre isActive en code.
-  const lsnap = await adminDb.collection("listings").orderBy("firstSeenAt", "desc").limit(listingLimit).get();
+export async function scoreAllProfiles(nowMs: number, listingLimit = 800) {
+  // Annonces vues le plus récemment (couvre tout l'actif) ; filtre isActive en code.
+  const lsnap = await adminDb.collection("listings").orderBy("lastSeenAt", "desc").limit(listingLimit).get();
   const listings = lsnap.docs
     .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
     .filter((l) => l.isActive !== false);
@@ -51,9 +64,14 @@ export async function scoreAllProfiles(nowMs: number, listingLimit = 300) {
       arrondissements: data.arrondissements ?? null,
     };
 
+    // On ne calcule le trajet (coûteux) que pour les candidates passant les filtres pas chers.
+    const candidates = listings.filter((l) => cheapPass(l, criteria));
+    const candidateIds = new Set<string>();
+
     let batch = adminDb.batch();
     let ops = 0;
-    for (const l of listings) {
+    for (const l of candidates) {
+      candidateIds.add(l.id);
       const geo = l.geo as { latitude?: number; longitude?: number } | undefined;
       const commuteByTarget: Record<string, number | null> = {};
       for (const t of targets) {
@@ -112,6 +130,14 @@ export async function scoreAllProfiles(nowMs: number, listingLimit = 300) {
       if (res.passesHard) totalMatches++;
       // Firestore batch max 500 writes → on commit par paquets.
       if (++ops >= 400) { await batch.commit(); batch = adminDb.batch(); ops = 0; }
+    }
+    // Nettoie les matchs périmés (annonces qui ne sont plus candidates : purgées, prix changé…).
+    const existing = await sp.ref.collection("matches").get();
+    for (const d of existing.docs) {
+      if (!candidateIds.has(d.id)) {
+        batch.delete(d.ref);
+        if (++ops >= 400) { await batch.commit(); batch = adminDb.batch(); ops = 0; }
+      }
     }
     if (ops > 0) await batch.commit();
   }

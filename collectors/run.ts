@@ -30,7 +30,13 @@ async function main() {
       console.error(`[${c.key}] ERREUR :`, (e as Error).message);
     }
   }
-  if (!storeListings) console.log("\nℹ Pas de creds Admin → pas d'écriture Firestore.");
+  if (storeListings) {
+    const { purgeStale } = await import("./purge");
+    const n = await purgeStale();
+    if (n) console.log(`\n🧹 Purge : ${n} annonces périmées (>3j) supprimées + matchs orphelins.`);
+  } else {
+    console.log("\nℹ Pas de creds Admin → pas d'écriture Firestore.");
+  }
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
