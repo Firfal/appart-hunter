@@ -91,7 +91,7 @@ export default function FichePanel({
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-[2000] flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/40" />
       <div
         className="relative w-full max-w-md h-full overflow-y-auto bg-surface border-l border-border p-5 shadow-xl"
