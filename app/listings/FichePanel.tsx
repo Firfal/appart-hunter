@@ -35,6 +35,7 @@ type Extra = {
 const STATUSES: { key: string; label: string }[] = [
   { key: "new", label: "Nouveau" },
   { key: "to_contact", label: "À contacter" },
+  { key: "called", label: "Appelé" },
   { key: "contacted", label: "Contacté" },
   { key: "visit", label: "Visite" },
   { key: "applied", label: "Dossier envoyé" },
