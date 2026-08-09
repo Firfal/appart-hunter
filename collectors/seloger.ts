@@ -6,12 +6,13 @@ import { geocode } from "../lib/geocode";
 chromium.use(stealth());
 
 // SeLoger : DataDome agressif. Solution : Playwright HEADLESS + plugin stealth (aucune fenêtre)
-// sur l'endpoint classified-search (respecte les filtres, dont priceMax) → annonces abordables.
+// sur classified-search (respecte priceMax). Pagination via CLIC « page suivante » (les params
+// d'URL sont ignorés ; c'est un SPA) après avoir retiré la bannière cookies qui bloque les clics.
 // Pas de géo dans la liste → géocodage du quartier (BAN, cache) + fallback centroïde arrondissement.
 const PARIS = "AD08FR31096"; // code localisation SeLoger pour Paris
 const PRICE_MAX = 2500; // plafond de collecte (le budget par user affine ensuite)
-const searchUrl = (pg: number) =>
-  `https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=${PARIS}&priceMax=${PRICE_MAX}&sort=d_dt_crea${pg > 1 ? `&LISTING-LISTpg=${pg}` : ""}`;
+const searchUrl = () =>
+  `https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=${PARIS}&priceMax=${PRICE_MAX}&sort=d_dt_crea`;
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 const ARR_CENTROID: Record<number, [number, number]> = {
@@ -92,33 +93,54 @@ async function normalize(r: Raw): Promise<NormalizedListing | null> {
 
 export const selogerCollector: Collector = {
   key: "seloger",
-  async fetchListings({ maxPages = 2 }: { maxPages?: number } = {}) {
+  async fetchListings({ maxPages = 15 }: { maxPages?: number } = {}) {
     const browser = await chromium.launch({ headless: true });
     try {
-      const page = await (await browser.newContext({ userAgent: UA, locale: "fr-FR", viewport: { width: 1400, height: 900 } })).newPage();
-      const raws: Raw[] = [];
-      for (let pg = 1; pg <= maxPages; pg++) {
-        let ok = false;
-        for (let i = 0; i < 4 && !ok; i++) {
-          try {
-            const r = await page.goto(searchUrl(pg), { waitUntil: "domcontentloaded", timeout: 40000 });
-            await page.waitForTimeout(8000);
-            const html = await page.content();
-            if (r?.status() === 200 && html.length > 150000 && !/datadome|geo\.captcha/i.test(html)) ok = true;
-            else await page.waitForTimeout(3000);
-          } catch {
-            await page.waitForTimeout(3000);
-          }
+      const page = await (await browser.newContext({ userAgent: UA, locale: "fr-FR", viewport: { width: 1400, height: 1000 } })).newPage();
+
+      // Chargement page 1 (avec retries DataDome).
+      let ok = false;
+      for (let i = 0; i < 4 && !ok; i++) {
+        try {
+          const r = await page.goto(searchUrl(), { waitUntil: "domcontentloaded", timeout: 40000 });
+          await page.waitForTimeout(8000);
+          const html = await page.content();
+          if (r?.status() === 200 && html.length > 150000 && !/datadome|geo\.captcha/i.test(html)) ok = true;
+          else await page.waitForTimeout(3000);
+        } catch {
+          await page.waitForTimeout(3000);
         }
-        if (!ok) break;
-        const cards = await page.evaluate(() =>
+      }
+      if (!ok) return [];
+      // Retire la bannière cookies qui intercepte les clics de pagination.
+      await page.evaluate(() => document.getElementById("usercentrics-root")?.remove());
+
+      const scrapeCards = () =>
+        page.evaluate(() =>
           [...document.querySelectorAll("[data-testid='serp-core-classified-card-testid']")].map((el) => ({
             href: (el.querySelector("a[href*='.htm']") as HTMLAnchorElement | null)?.getAttribute("href")?.split("?")[0] || "",
             text: el.textContent!.replace(/\s+/g, " ").trim(),
           }))
         );
-        raws.push(...cards.filter((c) => c.href));
+
+      const raws: Raw[] = [];
+      const seen = new Set<string>();
+      for (let pg = 1; pg <= maxPages; pg++) {
+        for (const c of await scrapeCards()) if (c.href && !seen.has(c.href)) { seen.add(c.href); raws.push(c); }
+        if (pg >= maxPages) break;
+        // Clic « page suivante » via JS (le bouton est en bas d'une longue liste → le .click()
+        // de Playwright timeout sur la visibilité ; un click() JS marche quelle que soit la position).
+        const clicked = await page.evaluate(() => {
+          const btn = document.querySelector("button[aria-label='page suivante']") as HTMLButtonElement | null;
+          if (!btn || btn.disabled || btn.getAttribute("aria-disabled") === "true") return false;
+          btn.click();
+          return true;
+        });
+        if (!clicked) break;
+        await page.waitForResponse((r) => /serp-bff\/search(\?|$)/.test(r.url()), { timeout: 15000 }).catch(() => {});
+        await page.waitForTimeout(3500);
       }
+
       const out: NormalizedListing[] = [];
       for (const r of raws) {
         const n = await normalize(r);
