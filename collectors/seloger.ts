@@ -50,8 +50,12 @@ function num(re: RegExp, s: string): number | null {
 
 async function normalize(r: Raw): Promise<NormalizedListing | null> {
   const t = r.text;
-  const idm = r.href.match(/(\d{6,})/);
-  if (!idm) return null;
+  // ID = dernier segment de l'URL (gère les 2 formats : 276136659.htm ancien, 26SQ7BJKWMAA nouveau,
+  // et bellesdemeures .../{id}/detail.htm).
+  const segs = r.href.split(/[?#]/)[0].split("/").filter(Boolean);
+  let externalId = (segs.pop() || "").replace(/\.htm$/, "");
+  if (externalId === "detail" || !externalId) externalId = segs.pop() || "";
+  if (!externalId) return null;
   const priceM = t.match(/([\d\s]+)\s*€\s*\/mois/);
   let price = priceM ? Number(priceM[1].replace(/\s/g, "")) : null;
   // Garde-fou : un loyer > 6000 €/mois = quasi toujours une erreur de parsing
@@ -66,7 +70,7 @@ async function normalize(r: Raw): Promise<NormalizedListing | null> {
   const g = await geoFor(neighborhood, zipcode, arr);
   return {
     source: "seloger",
-    externalId: idm[1],
+    externalId,
     url: r.href,
     title: neighborhood ? `Appartement ${neighborhood}` : "Appartement",
     priceTotal: price,
@@ -118,7 +122,8 @@ export const selogerCollector: Collector = {
       const scrapeCards = () =>
         page.evaluate(() =>
           [...document.querySelectorAll("[data-testid='serp-core-classified-card-testid']")].map((el) => ({
-            href: (el.querySelector("a[href*='.htm']") as HTMLAnchorElement | null)?.getAttribute("href")?.split("?")[0] || "",
+            // SeLoger a 2 formats de lien : /annonces/…-{id}.htm (ancien) et /annonce/…/{ID} (nouveau, sans .htm).
+            href: (el.querySelector("a[href*='/annonce'], a[href*='.htm']") as HTMLAnchorElement | null)?.getAttribute("href")?.split("?")[0] || "",
             text: el.textContent!.replace(/\s+/g, " ").trim(),
           }))
         );
